@@ -1,8 +1,10 @@
 require('dotenv').config();
-const FanartTvApi = require("fanart.tv-api");
-const apiKey = process.env.FANART_API;
-const baseUrl = "http://webservice.fanart.tv/v3/";
-const fanart = new FanartTvApi({ apiKey, baseUrl });
+
+// Fanart disabled (prevents Render crash)
+// const FanartTvApi = require("fanart.tv-api");
+// const apiKey = process.env.FANART_API;
+// const baseUrl = "http://webservice.fanart.tv/v3/";
+// const fanart = null;
 
 const { getTmdbClient } = require("../utils/getTmdbClient");
 const TARGET_ASPECT_RATIO = 4.0;
