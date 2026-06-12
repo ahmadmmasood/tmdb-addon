@@ -20,16 +20,20 @@ function dedupe(arr) {
 function mapWithGenres(results, genreList, type) {
   return results.map((el) => {
     const genres = Array.isArray(el.genre_ids)
-      ? el.genre_ids.map(
-          (id) => genreList.find((g) => g.id === id)?.name || "Unknown"
-        )
+      ? el.genre_ids
+          .map((id) => {
+            const found = genreList.find((g) => g.id === id);
+            return found ? found.name : null;
+          })
+          .filter(Boolean)
       : [];
 
     return {
       id: `tmdb:${el.id}`,
       name: type === "movie" ? el.title : el.name,
 
-      genre: genres.length ? genres.slice(0, 3) : ["Unknown"],
+      // 🔥 FIX: NEVER allow empty/unknown spam
+      genre: genres.length ? genres.slice(0, 3) : ["Uncategorized"],
 
       poster: el.poster_path
         ? `https://image.tmdb.org/t/p/w500${el.poster_path}`
