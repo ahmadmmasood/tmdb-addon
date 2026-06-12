@@ -12,11 +12,7 @@ function generateArrayOfYears(maxYears) {
   const max = new Date().getFullYear();
   const min = max - maxYears;
   const years = [];
-
-  for (let i = max; i >= min; i--) {
-    years.push(String(i));
-  }
-
+  for (let i = max; i >= min; i--) years.push(String(i));
   return years;
 }
 
@@ -27,9 +23,7 @@ function setOrderLanguage(language, languagesArray) {
   const uniqueMap = new Map();
 
   for (const lang of languagesArray) {
-    if (lang?.name) {
-      uniqueMap.set(lang.name, lang);
-    }
+    if (lang?.name) uniqueMap.set(lang.name, lang);
   }
 
   const list = [...uniqueMap.values()];
@@ -66,9 +60,7 @@ function createCatalog(id, type, name, options = []) {
         options: Array.isArray(options) ? [...new Set(options)] : [],
         isRequired: false,
       },
-      {
-        name: "skip",
-      },
+      { name: "skip" },
     ],
   };
 }
@@ -159,13 +151,14 @@ async function getManifest(config = {}) {
 
     name: "The Movie Database Addon",
     description:
-      "TMDB addon providing catalogs and metadata for movies and TV shows.",
+      "TMDB addon providing catalogs, metadata and streams.",
 
     favicon: `${host}/favicon.png`,
     logo: `${host}/logo.png`,
     background: `${host}/background.png`,
 
-    resources: ["catalog", "meta"],
+    // 🔥 THIS IS THE FIX
+    resources: ["catalog", "meta", "stream"],
 
     types: ["movie", "series"],
     idPrefixes: ["tmdb:"],
