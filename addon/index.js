@@ -22,19 +22,16 @@ const {
 
 const { findMovieStream, findSeriesStream } = require("./lib/xtream");
 
-/* ---------------- HELP: NORMALIZE OUTPUT ---------------- */
+/* ---------------- SAFE NORMALIZER ---------------- */
 
 function normalizeMetas(data) {
   if (!data) return [];
 
-  // already correct
   if (Array.isArray(data)) return data;
 
-  // { metas: [...] }
-  if (Array.isArray(data.metas)) return data.metas;
+  if (Array.isArray(data?.metas)) return data.metas;
 
-  // { metas: { metas: [...] } }  <-- your bug case
-  if (data.metas && Array.isArray(data.metas.metas)) return data.metas.metas;
+  if (Array.isArray(data?.metas?.metas)) return data.metas.metas;
 
   return [];
 }
@@ -91,7 +88,7 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   const page = skip ? Math.floor(skip / 20) + 1 : 1;
 
   try {
-    let metas;
+    let metas = [];
 
     const args = [type, language, page];
 
@@ -125,12 +122,10 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
       }
     }
 
-    const normalized = normalizeMetas(metas);
+    /* ---------------- CRITICAL FIX ---------------- */
+    metas = normalizeMetas(metas);
 
-    // ALWAYS enforce correct format
-    return res.json({
-      metas: normalized,
-    });
+    return res.json({ metas });
 
   } catch (e) {
     console.error("Catalog error:", e);
