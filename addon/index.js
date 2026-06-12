@@ -1,7 +1,7 @@
 const express = require("express");
 const addon = express();
 
-/* ---------------- LOGGING (🔥 IMPORTANT) ---------------- */
+/* ---------------- LOGGING (UHF DEBUG) ---------------- */
 
 addon.use((req, res, next) => {
   console.log("👉 HIT:", req.method, req.originalUrl);
@@ -30,7 +30,7 @@ const {
 
 const { findMovieStream, findSeriesStream } = require("./lib/xtream");
 
-/* ---------------- MIDDLEWARE ---------------- */
+/* ---------------- CORS ---------------- */
 
 addon.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -65,10 +65,25 @@ addon.get("/:catalogChoices?/manifest.json", async (req, res) => {
   }
 });
 
-/* ---------------- CATALOG ---------------- */
+/* ---------------- CATALOG (🔥 FIXED FOR UHF GENRE REQUESTS) ---------------- */
 
 addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
-  const { catalogChoices, type, id } = req.params;
+  const { catalogChoices, type } = req.params;
+
+  // 🔥 CLEAN UHF DIRTY IDS
+  let id = req.params.id;
+
+  if (id.includes("/genre=")) {
+    id = id.split("/genre=")[0];
+  }
+
+  if (id.includes("genre=")) {
+    id = id.split("genre=")[0];
+  }
+
+  if (id.endsWith(".json")) {
+    id = id.replace(".json", "");
+  }
 
   let config = {};
   try {
@@ -79,7 +94,6 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
 
   const language = config.language || DEFAULT_LANGUAGE;
   const { genre, skip, search } = req.query;
-
   const page = skip ? Math.floor(skip / 20) + 1 : 1;
 
   try {
@@ -117,7 +131,9 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
       }
     }
 
-    return res.json({ metas: result.metas || [] });
+    return res.json({
+      metas: result?.metas || [],
+    });
 
   } catch (e) {
     console.error("Catalog error:", e);
