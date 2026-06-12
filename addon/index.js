@@ -23,6 +23,9 @@ const {
   getTraktRecommendations,
 } = require("./lib/getTraktLists");
 
+/* ---------------- XTREAM IMPORT ---------------- */
+const { findMovieStream, findSeriesStream } = require("./lib/xtream");
+
 /* ---------------- MIDDLEWARE ---------------- */
 
 addon.use((req, res, next) => {
@@ -38,7 +41,7 @@ addon.use(analytics.middleware);
 
 addon.get("/", (req, res) => {
   res.json({
-    name: "TMDB Addon",
+    name: "TMDB + Xtream Addon",
     manifest: "/manifest.json",
     status: "running"
   });
@@ -135,27 +138,60 @@ addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
   }
 });
 
-/* ---------------- REQUIRED STREAM ENDPOINT (FIXES INSTALL ERROR) ----------------
-   UHF requires "stream" even if you later connect Xtream.
-   This stub prevents install failure.
-------------------------------------------------------------------- */
+/* ---------------- XTREAM STREAM ---------------- */
 
 addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
-  const { id, type } = req.params;
+  const { type } = req.params;
+  const config = parseConfig(req.params.catalogChoices) || {};
 
-  // TEMP STUB STREAM (replace later with Xtream logic)
-  res.json({
-    streams: [
-      {
-        url: "",
-        title: "No stream connected",
-        name: "Connect Xtream to enable playback",
-        behaviorHints: {
-          notWebReady: true
+  try {
+    const title = req.query.title || "";
+    const year = req.query.year || "";
+
+    let stream = null;
+
+    if (type === "movie") {
+      stream = await findMovieStream(title, year, config);
+    } else {
+      stream = await findSeriesStream(title, config);
+    }
+
+    if (!stream) {
+      return res.json({
+        streams: [
+          {
+            title: "No match found in Xtream",
+            url: "",
+            behaviorHints: { notWebReady: true }
+          }
+        ]
+      });
+    }
+
+    return res.json({
+      streams: [
+        {
+          url: stream.url,
+          title: stream.title,
+          behaviorHints: {
+            bingeGroup: "default"
+          }
         }
-      }
-    ]
-  });
+      ]
+    });
+  } catch (e) {
+    console.error("Stream error:", e);
+
+    res.json({
+      streams: [
+        {
+          title: "Stream error",
+          url: "",
+          behaviorHints: { notWebReady: true }
+        }
+      ]
+    });
+  }
 });
 
 /* ---------------- HEALTH ---------------- */
@@ -163,5 +199,7 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
 addon.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
+
+/* ---------------- EXPORT ---------------- */
 
 module.exports = addon;
