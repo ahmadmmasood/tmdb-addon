@@ -11,7 +11,6 @@ const { getCatalog } = require("./lib/getCatalog");
 const { getSearch } = require("./lib/getSearch");
 const { getManifest, DEFAULT_LANGUAGE } = require("./lib/getManifest");
 const { getMeta } = require("./lib/getMeta");
-const { getTmdb } = require("./lib/getTmdb");
 const { cacheWrapMeta } = require("./lib/getCache");
 const { getTrending } = require("./lib/getTrending");
 
@@ -24,7 +23,7 @@ const {
   getTraktRecommendations,
 } = require("./lib/getTraktLists");
 
-/* ---------------- BASIC MIDDLEWARE ---------------- */
+/* ---------------- MIDDLEWARE ---------------- */
 
 addon.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -38,18 +37,10 @@ addon.use(analytics.middleware);
 /* ---------------- ROOT ---------------- */
 
 addon.get("/", (req, res) => {
-  res.redirect("/manifest.json");
-});
-
-/* ---------------- SIMPLE CONFIG PAGE (NO UI / NO DIST) ---------------- */
-
-addon.get("/configure", (req, res) => {
   res.json({
-    status: "running",
-    message: "TMDB Addon is active",
+    name: "TMDB Addon",
     manifest: "/manifest.json",
-    catalog_example: "/catalog/movie/tmdb.top",
-    meta_example: "/meta/movie/tmdb:123"
+    status: "running"
   });
 });
 
@@ -66,11 +57,10 @@ addon.get("/:catalogChoices?/manifest.json", async (req, res) => {
   }
 });
 
-/* ---------------- FIXED CATALOG ROUTE ---------------- */
+/* ---------------- CATALOG ---------------- */
 
 addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   const { catalogChoices, type, id } = req.params;
-
   const config = parseConfig(catalogChoices) || {};
   const language = config.language || DEFAULT_LANGUAGE;
 
@@ -101,21 +91,13 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
         case "trakt.watchlist":
           if (!config.traktAccessToken)
             throw new Error("Missing Trakt token");
-          metas = await getTraktWatchlist(
-            ...args,
-            genre,
-            config.traktAccessToken
-          );
+          metas = await getTraktWatchlist(...args, genre, config.traktAccessToken);
           break;
 
         case "trakt.recommendations":
           if (!config.traktAccessToken)
             throw new Error("Missing Trakt token");
-          metas = await getTraktRecommendations(
-            ...args,
-            genre,
-            config.traktAccessToken
-          );
+          metas = await getTraktRecommendations(...args, genre, config.traktAccessToken);
           break;
 
         default:
@@ -153,12 +135,33 @@ addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
   }
 });
 
-/* ---------------- HEALTH CHECK ---------------- */
+/* ---------------- REQUIRED STREAM ENDPOINT (FIXES INSTALL ERROR) ----------------
+   UHF requires "stream" even if you later connect Xtream.
+   This stub prevents install failure.
+------------------------------------------------------------------- */
+
+addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
+  const { id, type } = req.params;
+
+  // TEMP STUB STREAM (replace later with Xtream logic)
+  res.json({
+    streams: [
+      {
+        url: "",
+        title: "No stream connected",
+        name: "Connect Xtream to enable playback",
+        behaviorHints: {
+          notWebReady: true
+        }
+      }
+    ]
+  });
+});
+
+/* ---------------- HEALTH ---------------- */
 
 addon.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
-
-/* ---------------- EXPORT ---------------- */
 
 module.exports = addon;
