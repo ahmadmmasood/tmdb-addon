@@ -35,13 +35,21 @@ addon.use((req, res, next) => {
 addon.use(express.json());
 addon.use(analytics.middleware);
 
+/* ---------------- SAFE WRAPPER ---------------- */
+function safeMetas(result) {
+  if (!result) return { metas: [] };
+  if (Array.isArray(result)) return { metas: result };
+  if (Array.isArray(result.metas)) return result;
+  return { metas: [] };
+}
+
 /* ---------------- ROOT ---------------- */
 
 addon.get("/", (req, res) => {
   res.json({
     name: "TMDB + Xtream Addon",
     status: "running",
-    manifest: "/manifest.json"
+    manifest: "/manifest.json",
   });
 });
 
@@ -66,7 +74,7 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   let config = {};
   try {
     config = parseConfig(catalogChoices) || {};
-  } catch (e) {
+  } catch {
     config = {};
   }
 
@@ -76,52 +84,53 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
 
   try {
     const args = [type, language, page];
-    let metas = [];
+    let result;
 
     if (search) {
-      metas = await getSearch(id, type, language, search, config);
+      result = await getSearch(id, type, language, search, config);
     } else {
       switch (id) {
         case "tmdb.trending":
-          metas = await getTrending(...args, genre, config);
+          result = await getTrending(...args, genre, config);
           break;
 
         case "tmdb.favorites":
-          metas = await getFavorites(...args, genre, config);
+          result = await getFavorites(...args, genre, config);
           break;
 
         case "tmdb.watchlist":
-          metas = await getWatchList(...args, genre, config);
+          result = await getWatchList(...args, genre, config);
           break;
 
         case "trakt.watchlist":
-          metas = await getTraktWatchlist(...args, genre, config.traktAccessToken);
+          result = await getTraktWatchlist(...args, genre, config.traktAccessToken);
           break;
 
         case "trakt.recommendations":
-          metas = await getTraktRecommendations(...args, genre, config.traktAccessToken);
+          result = await getTraktRecommendations(...args, genre, config.traktAccessToken);
           break;
 
         default:
-          metas = await getCatalog(...args, id, genre, config);
+          result = await getCatalog(type, language, page, id, genre, config);
           break;
       }
     }
 
-    // ✅ IMPORTANT FIX FOR UHF
-    res.json({ metas });
+    // ✅ FIX: ALWAYS normalize output
+    res.json(safeMetas(result));
 
   } catch (e) {
     console.error("Catalog error:", e);
-    res.status(500).json({
+
+    res.json({
       metas: [
         {
           id: "tmdb:error",
           name: "Error loading catalog",
           type,
-          description: e.message
-        }
-      ]
+          description: e.message,
+        },
+      ],
     });
   }
 });
@@ -130,13 +139,7 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
 
 addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
   try {
-    let config = {};
-    try {
-      config = parseConfig(req.params.catalogChoices) || {};
-    } catch (e) {
-      config = {};
-    }
-
+    const config = parseConfig(req.params.catalogChoices) || {};
     const language = config.language || DEFAULT_LANGUAGE;
     const tmdbId = req.params.id.split(":")[1];
 
@@ -160,7 +163,7 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
   let config = {};
   try {
     config = parseConfig(req.params.catalogChoices) || {};
-  } catch (e) {
+  } catch {
     config = {};
   }
 
@@ -169,61 +172,30 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
     const year = req.query.year || "";
 
     if (!title) {
-      return res.json({
-        streams: [
-          {
-            title: "Missing title",
-            url: "",
-            behaviorHints: { notWebReady: true }
-          }
-        ]
-      });
+      return res.json({ streams: [] });
     }
 
-    let stream = null;
+    let stream =
+      type === "movie"
+        ? await findMovieStream(title, year, config)
+        : await findSeriesStream(title, config);
 
-    if (type === "movie") {
-      stream = await findMovieStream(title, year, config);
-    } else {
-      stream = await findSeriesStream(title, config);
-    }
-
-    if (!stream || !stream.url) {
-      return res.json({
-        streams: [
-          {
-            title: "No stream found",
-            url: "",
-            behaviorHints: { notWebReady: true }
-          }
-        ]
-      });
+    if (!stream?.url) {
+      return res.json({ streams: [] });
     }
 
     return res.json({
       streams: [
         {
-          title: stream.title || "Xtream Stream",
+          title: stream.title || "Stream",
           url: stream.url,
-          behaviorHints: {
-            bingeGroup: "default"
-          }
-        }
-      ]
+          behaviorHints: { bingeGroup: "default" },
+        },
+      ],
     });
-
   } catch (e) {
     console.error("Stream error:", e);
-
-    return res.json({
-      streams: [
-        {
-          title: "Stream error",
-          url: "",
-          behaviorHints: { notWebReady: true }
-        }
-      ]
-    });
+    return res.json({ streams: [] });
   }
 });
 
