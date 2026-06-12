@@ -1,4 +1,5 @@
 require("dotenv").config();
+
 const { getTmdbClient } = require("../utils/getTmdbClient");
 const { getGenreList } = require("./getGenreList");
 const { getLanguages } = require("./getLanguages");
@@ -6,19 +7,20 @@ const { parseMedia } = require("../utils/parseProps");
 const { fetchMDBListItems, parseMDBListItems } = require("../utils/mdbList");
 const CATALOG_TYPES = require("../static/catalog-types.json");
 
+/* ---------------- MAIN ---------------- */
+
 async function getCatalog(type, language, page, id, genre, config) {
   const moviedb = getTmdbClient(config);
   const mdblistKey = config.mdblistkey;
 
   /* ---------------- MDBLIST ---------------- */
-  if (id.startsWith("mdblist.")) {
+  if (id && id.startsWith("mdblist.")) {
     const listId = id.split(".")[1];
     const results = await fetchMDBListItems(listId, mdblistKey, language, page);
-    const parsed = await parseMDBListItems(results, type, genre, language, config);
-    return parsed;
+    return await parseMDBListItems(results, type, genre, language, config);
   }
 
-  /* ---------------- BASE PARAMS ---------------- */
+  /* ---------------- PARAMS ---------------- */
   const genreList = await getGenreList(language, type, config);
   const parameters = await buildParameters(type, language, page, id, genre, genreList, config);
 
@@ -27,23 +29,24 @@ async function getCatalog(type, language, page, id, genre, config) {
       ? moviedb.discoverMovie.bind(moviedb)
       : moviedb.discoverTv.bind(moviedb);
 
-  const providerId = id.split(".")[1];
-  const isStreaming = Object.keys(CATALOG_TYPES.streaming).includes(providerId);
+  const isStreaming =
+    id && id.split(".")[1]
+      ? Object.keys(CATALOG_TYPES.streaming || {}).includes(id.split(".")[1])
+      : false;
 
   const isStrictMode =
-    config.strictRegionFilter === "true" || config.strictRegionFilter === true;
+    config.strictRegionFilter === true || config.strictRegionFilter === "true";
 
   const isDigitalFilterMode =
-    config.digitalReleaseFilter === "true" || config.digitalReleaseFilter === true;
+    config.digitalReleaseFilter === true || config.digitalReleaseFilter === "true";
 
-  /* ---------------- SAFE FETCH ---------------- */
+  /* ---------------- FETCH PAGE ---------------- */
   async function fetchPage(params) {
     try {
       const res = await fetchFunction(params);
 
       if (!res || !Array.isArray(res.results)) return [];
 
-      // IMPORTANT: lightweight mapping only
       return res.results.map((item) => parseMedia(item));
     } catch (err) {
       console.error("[fetchPage error]", err.message);
@@ -52,51 +55,49 @@ async function getCatalog(type, language, page, id, genre, config) {
   }
 
   try {
-    /* ---------------- PAGINATION ---------------- */
     const needsExtraFetch =
       type === "movie" && !isStreaming && (isStrictMode || isDigitalFilterMode);
 
-    const PAGES_TO_FETCH = needsExtraFetch ? 2 : 1;
+    const pages = needsExtraFetch ? 2 : 1;
     const startPage = parseInt(page) || 1;
 
     const pagePromises = [];
 
-    for (let i = 0; i < PAGES_TO_FETCH; i++) {
-      const pageParams = { ...parameters, page: startPage + i };
-      pagePromises.push(fetchPage(pageParams));
+    for (let i = 0; i < pages; i++) {
+      pagePromises.push(fetchPage({ ...parameters, page: startPage + i }));
     }
 
-    const pageResults = await Promise.all(pagePromises);
+    const results = await Promise.all(pagePromises);
 
-    /* ---------------- MERGE RESULTS ---------------- */
+    /* ---------------- MERGE ---------------- */
     let metas = [];
 
-    for (const pageMetas of pageResults) {
-      for (const meta of pageMetas) {
-        if (!metas.find((m) => m.id === meta.id)) {
-          metas.push(meta);
+    for (const pageItems of results) {
+      for (const item of pageItems) {
+        if (!item || !item.id) continue;
+
+        if (!metas.find((m) => m.id === item.id)) {
+          metas.push(item);
         }
       }
     }
 
-    /* ---------------- EMPTY STATE ---------------- */
-    if (metas.length === 0) {
+    /* ---------------- SAFE EMPTY ---------------- */
+    if (!metas.length) {
       return {
         metas: [
           {
             id: "tmdb:no-content",
             type,
-            name: "No Content Available",
+            name: "No Content Found",
             poster: "",
             background: "",
-            description: "No content found for this selection.",
-            genres: []
+            description: "No results returned from TMDB."
           }
         ]
       };
     }
 
-    /* ---------------- RETURN ---------------- */
     return {
       metas: metas.slice(0, 20)
     };
@@ -106,13 +107,12 @@ async function getCatalog(type, language, page, id, genre, config) {
     return {
       metas: [
         {
-          id: "tmdb:no-content",
+          id: "tmdb:error",
           type,
-          name: "Error Loading Content",
+          name: "Catalog Error",
           poster: "",
           background: "",
-          description: "Error loading catalog.",
-          genres: []
+          description: error.message
         }
       ]
     };
@@ -120,40 +120,45 @@ async function getCatalog(type, language, page, id, genre, config) {
 }
 
 /* ---------------- PARAMETERS ---------------- */
-async function buildParameters(type, language, page, id, genre, genreList, config) {
-  const languages = await getLanguages(config);
 
-  const parameters = {
+async function buildParameters(type, language, page, id, genre, genreList, config) {
+  let languages = [];
+
+  try {
+    languages = await getLanguages(config);
+  } catch {
+    languages = [];
+  }
+
+  const params = {
     language,
     page,
     "vote_count.gte": 10
   };
 
-  const providerId = id.split(".")[1];
-  const isStreaming = Object.keys(CATALOG_TYPES.streaming).includes(providerId);
-
+  /* ---------------- YEAR ---------------- */
   if (id === "tmdb.year" && genre) {
-    const year = genre;
     if (type === "movie") {
-      parameters.primary_release_year = year;
+      params.primary_release_year = genre;
     } else {
-      parameters.first_air_date_year = year;
+      params.first_air_date_year = genre;
     }
   }
 
-  if (id === "tmdb.language") {
+  /* ---------------- LANGUAGE ---------------- */
+  if (id === "tmdb.language" && genre) {
     const lang = languages.find((l) => l.name === genre);
-    parameters.with_original_language = lang
-      ? lang.iso_639_1.split("-")[0]
-      : language.split("-")[0];
+    params.with_original_language =
+      lang?.iso_639_1?.split("-")[0] || language.split("-")[0];
   }
 
+  /* ---------------- GENRE ---------------- */
   if (id === "tmdb.top" && genre) {
-    const genreData = genreList.find((g) => g.name === genre);
-    if (genreData) parameters.with_genres = genreData.id;
+    const g = genreList.find((x) => x.name === genre);
+    if (g) params.with_genres = g.id;
   }
 
-  return parameters;
+  return params;
 }
 
 module.exports = { getCatalog };
