@@ -83,10 +83,10 @@ function getDefaultCatalogs() {
 async function getManifest(config = {}) {
   const language = config.language || DEFAULT_LANGUAGE;
 
-  const userCatalogs =
-    Array.isArray(config.catalogs) && config.catalogs.length
-      ? config.catalogs
-      : getDefaultCatalogs();
+  const userCatalogs = [
+    { id: "tmdb.top", type: "movie" },
+    { id: "tmdb.top", type: "series" }
+  ];
 
   loadTranslations(language);
 
@@ -110,7 +110,7 @@ async function getManifest(config = {}) {
     console.error("Genre fetch failed:", e.message);
   }
 
-  let filterLanguages = [];
+  const filterLanguages = ["English", "Spanish"];
 
   try {
     const languagesArray = await getLanguages(config);
@@ -119,27 +119,22 @@ async function getManifest(config = {}) {
     console.error("Language fetch failed:", e.message);
   }
 
-  const catalogs = userCatalogs
-    .filter((c) => c && c.id && c.type)
-    .map((c) => {
-      if (c.id.includes("year")) {
-        return createCatalog(c.id, c.type, "Year", years);
-      }
-
-      if (c.id.includes("language")) {
-        return createCatalog(c.id, c.type, "Language", filterLanguages);
-      }
-
-      if (c.id.includes("trending")) {
-        return createCatalog(c.id, c.type, "Trending", ["Day", "Week"]);
-      }
-
-      if (c.id.includes("latest")) {
-        return createCatalog(c.id, c.type, "Latest Releases", genres_movie);
-      }
-
-      return createCatalog(c.id, c.type, "Popular", genres_movie);
-    });
+  const catalogs = [
+  {
+    id: "tmdb.top",
+    type: "movie",
+    name: "Popular Movies",
+    pageSize: 20,
+    extra: []
+  },
+  {
+    id: "tmdb.top",
+    type: "series",
+    name: "Popular Series",
+    pageSize: 20,
+    extra: []
+  }
+];
 
   const host =
     process.env.HOST_NAME ||
