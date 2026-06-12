@@ -1,6 +1,13 @@
 const express = require("express");
 const addon = express();
 
+/* ---------------- LOGGING (🔥 IMPORTANT) ---------------- */
+
+addon.use((req, res, next) => {
+  console.log("👉 HIT:", req.method, req.originalUrl);
+  next();
+});
+
 /* ---------------- IMPORTS ---------------- */
 
 const analytics = require("./utils/analytics");
@@ -11,6 +18,7 @@ const { getManifest, DEFAULT_LANGUAGE } = require("./lib/getManifest");
 const { getMeta } = require("./lib/getMeta");
 const { cacheWrapMeta } = require("./lib/getCache");
 const { getTrending } = require("./lib/getTrending");
+
 const { parseConfig } = require("./utils/parseProps");
 
 const { getFavorites, getWatchList } = require("./lib/getPersonalLists");
@@ -21,20 +29,6 @@ const {
 } = require("./lib/getTraktLists");
 
 const { findMovieStream, findSeriesStream } = require("./lib/xtream");
-
-/* ---------------- SAFE NORMALIZER ---------------- */
-
-function normalizeMetas(data) {
-  if (!data) return [];
-
-  if (Array.isArray(data)) return data;
-
-  if (Array.isArray(data?.metas)) return data.metas;
-
-  if (Array.isArray(data?.metas?.metas)) return data.metas.metas;
-
-  return [];
-}
 
 /* ---------------- MIDDLEWARE ---------------- */
 
@@ -85,47 +79,45 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
 
   const language = config.language || DEFAULT_LANGUAGE;
   const { genre, skip, search } = req.query;
+
   const page = skip ? Math.floor(skip / 20) + 1 : 1;
 
   try {
-    let metas = [];
+    let result = [];
 
     const args = [type, language, page];
 
     if (search) {
-      metas = await getSearch(id, type, language, search, config);
+      result = await getSearch(id, type, language, search, config);
     } else {
       switch (id) {
         case "tmdb.trending":
-          metas = await getTrending(...args, genre, config);
+          result = await getTrending(...args, genre, config);
           break;
 
         case "tmdb.favorites":
-          metas = await getFavorites(...args, genre, config);
+          result = await getFavorites(...args, genre, config);
           break;
 
         case "tmdb.watchlist":
-          metas = await getWatchList(...args, genre, config);
+          result = await getWatchList(...args, genre, config);
           break;
 
         case "trakt.watchlist":
-          metas = await getTraktWatchlist(...args, genre, config.traktAccessToken);
+          result = await getTraktWatchlist(...args, genre, config.traktAccessToken);
           break;
 
         case "trakt.recommendations":
-          metas = await getTraktRecommendations(...args, genre, config.traktAccessToken);
+          result = await getTraktRecommendations(...args, genre, config.traktAccessToken);
           break;
 
         default:
-          metas = await getCatalog(type, language, page, id, genre, config);
+          result = await getCatalog(type, language, page, id, genre, config);
           break;
       }
     }
 
-    /* ---------------- CRITICAL FIX ---------------- */
-    metas = normalizeMetas(metas);
-
-    return res.json({ metas });
+    return res.json({ metas: result.metas || [] });
 
   } catch (e) {
     console.error("Catalog error:", e);
@@ -149,7 +141,6 @@ addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
   try {
     const config = parseConfig(req.params.catalogChoices) || {};
     const language = config.language || DEFAULT_LANGUAGE;
-
     const tmdbId = req.params.id.split(":")[1];
 
     const resp = await cacheWrapMeta(
@@ -184,26 +175,33 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
       return res.json({ streams: [] });
     }
 
-    let stream =
-      type === "movie"
-        ? await findMovieStream(title, year, config)
-        : await findSeriesStream(title, config);
+    let stream = null;
 
-    if (!stream?.url) {
+    if (type === "movie") {
+      stream = await findMovieStream(title, year, config);
+    } else {
+      stream = await findSeriesStream(title, config);
+    }
+
+    if (!stream || !stream.url) {
       return res.json({ streams: [] });
     }
 
     return res.json({
       streams: [
         {
-          title: stream.title || "Stream",
+          title: stream.title || "Xtream Stream",
           url: stream.url,
+          behaviorHints: {
+            bingeGroup: "default",
+          },
         },
       ],
     });
 
   } catch (e) {
     console.error("Stream error:", e);
+
     return res.json({ streams: [] });
   }
 });
