@@ -2,11 +2,8 @@ require("dotenv").config();
 
 const { getTmdbClient } = require("../utils/getTmdbClient");
 const { getGenreList } = require("./getGenreList");
-const CATALOG_TYPES = require("../static/catalog-types.json");
-const { parseMedia } = require("../utils/parseProps");
 
-/* ---------------- NETFLIX STYLE HELPERS ---------------- */
-
+/* ---------------- DEDUPE ---------------- */
 function dedupe(arr) {
   const seen = new Set();
   return arr.filter((x) => {
@@ -17,14 +14,12 @@ function dedupe(arr) {
   });
 }
 
-function mapWithGenres(results, genreList, type) {
+/* ---------------- MAP TMDB RESULTS ---------------- */
+function mapResults(results, genreList, type) {
   return results.map((el) => {
     const genres = Array.isArray(el.genre_ids)
       ? el.genre_ids
-          .map((id) => {
-            const found = genreList.find((g) => g.id === id);
-            return found ? found.name : null;
-          })
+          .map((id) => genreList.find((g) => g.id === id)?.name)
           .filter(Boolean)
       : [];
 
@@ -32,7 +27,6 @@ function mapWithGenres(results, genreList, type) {
       id: `tmdb:${el.id}`,
       name: type === "movie" ? el.title : el.name,
 
-      // 🔥 FIX: NEVER allow empty/unknown spam
       genre: genres.length ? genres.slice(0, 3) : ["Uncategorized"],
 
       poster: el.poster_path
@@ -45,14 +39,16 @@ function mapWithGenres(results, genreList, type) {
 
       posterShape: "regular",
 
-      imdbRating: el.vote_average ? el.vote_average.toFixed(1) : "N/A",
+      imdbRating: el.vote_average
+        ? el.vote_average.toFixed(1)
+        : "N/A",
 
       year:
         type === "movie"
           ? el.release_date?.substring(0, 4) || ""
           : el.first_air_date?.substring(0, 4) || "",
 
-      type: type === "movie" ? "movie" : "series",
+      type,
 
       description: el.overview || "",
     };
@@ -60,24 +56,20 @@ function mapWithGenres(results, genreList, type) {
 }
 
 /* ---------------- MAIN ---------------- */
-
 async function getCatalog(type, language, page, id, genre, config) {
-  const moviedb = getTmdbClient(config);
+  const tmdb = getTmdbClient(config);
 
-  const fetchFunction =
+  const fetchFn =
     type === "movie"
-      ? moviedb.discoverMovie.bind(moviedb)
-      : moviedb.discoverTv.bind(moviedb);
+      ? tmdb.discoverMovie.bind(tmdb)
+      : tmdb.discoverTv.bind(tmdb);
 
   let genreList = [];
-
   try {
     genreList = await getGenreList(language, type, config);
   } catch (e) {
     console.error("Genre load failed:", e.message);
   }
-
-  /* ---------------- BASE PARAMS ---------------- */
 
   const params = {
     language,
@@ -85,9 +77,13 @@ async function getCatalog(type, language, page, id, genre, config) {
     "vote_count.gte": 10,
   };
 
+  /* ---------------- FILTERS ---------------- */
   if (id === "tmdb.year" && genre) {
-    if (type === "movie") params.primary_release_year = genre;
-    else params.first_air_date_year = genre;
+    params[
+      type === "movie"
+        ? "primary_release_year"
+        : "first_air_date_year"
+    ] = genre;
   }
 
   if (id === "tmdb.top" && genre) {
@@ -96,12 +92,11 @@ async function getCatalog(type, language, page, id, genre, config) {
   }
 
   /* ---------------- FETCH ---------------- */
-
   async function fetchPage(p) {
     try {
-      const res = await fetchFunction(p);
+      const res = await fetchFn(p);
       if (!res?.results) return [];
-      return mapWithGenres(res.results, genreList, type);
+      return mapResults(res.results, genreList, type);
     } catch (e) {
       console.error("fetchPage error:", e.message);
       return [];
@@ -111,33 +106,28 @@ async function getCatalog(type, language, page, id, genre, config) {
   try {
     const startPage = parseInt(page) || 1;
 
-    const [page1, page2] = await Promise.all([
+    const [p1, p2] = await Promise.all([
       fetchPage({ ...params, page: startPage }),
       fetchPage({ ...params, page: startPage + 1 }),
     ]);
 
-    let metas = dedupe([...page1, ...page2]);
+    const metas = dedupe([...p1, ...p2]).slice(0, 20);
 
-    /* ---------------- EMPTY SAFE STATE ---------------- */
-
-    if (!metas.length) {
-      return {
-        metas: [
-          {
-            id: "tmdb:no-content",
-            type,
-            name: "No Results",
-            poster: "",
-            background: "",
-            genre: ["Unknown"],
-            description: "No content found for this category.",
-          },
-        ],
-      };
-    }
-
+    /* ---------------- IMPORTANT FIX ---------------- */
     return {
-      metas: metas.slice(0, 20),
+      metas: metas.length
+        ? metas
+        : [
+            {
+              id: "tmdb:no-content",
+              type,
+              name: "No Results",
+              poster: "",
+              background: "",
+              genre: [],
+              description: "No content found.",
+            },
+          ],
     };
   } catch (error) {
     console.error("getCatalog error:", error);
@@ -150,14 +140,12 @@ async function getCatalog(type, language, page, id, genre, config) {
           name: "Error Loading Content",
           poster: "",
           background: "",
-          genre: ["Unknown"],
+          genre: [],
           description: error.message,
         },
       ],
     };
   }
 }
-
-/* ---------------- EXPORT ---------------- */
 
 module.exports = { getCatalog };
