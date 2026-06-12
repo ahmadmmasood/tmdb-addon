@@ -21,7 +21,6 @@ const {
   getTraktRecommendations,
 } = require("./lib/getTraktLists");
 
-/* ---------------- XTREAM IMPORT ---------------- */
 const { findMovieStream, findSeriesStream } = require("./lib/xtream");
 
 /* ---------------- MIDDLEWARE ---------------- */
@@ -63,9 +62,15 @@ addon.get("/:catalogChoices?/manifest.json", async (req, res) => {
 
 addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   const { catalogChoices, type, id } = req.params;
-  const config = parseConfig(catalogChoices) || {};
-  const language = config.language || DEFAULT_LANGUAGE;
 
+  let config = {};
+  try {
+    config = parseConfig(catalogChoices) || {};
+  } catch (e) {
+    config = {};
+  }
+
+  const language = config.language || DEFAULT_LANGUAGE;
   const { genre, skip, search } = req.query;
   const page = skip ? Math.floor(skip / 20) + 1 : 1;
 
@@ -103,10 +108,21 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
       }
     }
 
-    res.json(metas);
+    // ✅ IMPORTANT FIX FOR UHF
+    res.json({ metas });
+
   } catch (e) {
     console.error("Catalog error:", e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({
+      metas: [
+        {
+          id: "tmdb:error",
+          name: "Error loading catalog",
+          type,
+          description: e.message
+        }
+      ]
+    });
   }
 });
 
@@ -114,9 +130,14 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
 
 addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
   try {
-    const config = parseConfig(req.params.catalogChoices) || {};
-    const language = config.language || DEFAULT_LANGUAGE;
+    let config = {};
+    try {
+      config = parseConfig(req.params.catalogChoices) || {};
+    } catch (e) {
+      config = {};
+    }
 
+    const language = config.language || DEFAULT_LANGUAGE;
     const tmdbId = req.params.id.split(":")[1];
 
     const resp = await cacheWrapMeta(
@@ -131,21 +152,35 @@ addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
   }
 });
 
-/* ---------------- STREAM (FIXED FOR UHF) ---------------- */
+/* ---------------- STREAM ---------------- */
 
 addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
-  const { type, id } = req.params;
-  const config = parseConfig(req.params.catalogChoices) || {};
+  const { type } = req.params;
+
+  let config = {};
+  try {
+    config = parseConfig(req.params.catalogChoices) || {};
+  } catch (e) {
+    config = {};
+  }
 
   try {
-    let stream = null;
-
     const title = req.query.title || "";
     const year = req.query.year || "";
 
     if (!title) {
-      return res.json({ streams: [] });
+      return res.json({
+        streams: [
+          {
+            title: "Missing title",
+            url: "",
+            behaviorHints: { notWebReady: true }
+          }
+        ]
+      });
     }
+
+    let stream = null;
 
     if (type === "movie") {
       stream = await findMovieStream(title, year, config);
@@ -154,7 +189,15 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
     }
 
     if (!stream || !stream.url) {
-      return res.json({ streams: [] });
+      return res.json({
+        streams: [
+          {
+            title: "No stream found",
+            url: "",
+            behaviorHints: { notWebReady: true }
+          }
+        ]
+      });
     }
 
     return res.json({
@@ -171,7 +214,16 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
 
   } catch (e) {
     console.error("Stream error:", e);
-    return res.json({ streams: [] });
+
+    return res.json({
+      streams: [
+        {
+          title: "Stream error",
+          url: "",
+          behaviorHints: { notWebReady: true }
+        }
+      ]
+    });
   }
 });
 
