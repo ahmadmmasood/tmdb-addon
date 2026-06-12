@@ -1,34 +1,24 @@
 require("dotenv").config();
 const { getGenreList } = require("./getGenreList");
 const packageJson = require("../../package.json");
-const catalogsTranslations = require("../static/translations.json");
 const CATALOG_TYPES = require("../static/catalog-types.json");
 
 const DEFAULT_LANGUAGE = "en-US";
 
-/* ---------------- YEARS ---------------- */
-function generateArrayOfYears(maxYears) {
-  const max = new Date().getFullYear();
-  const min = max - maxYears;
-  const years = [];
-  for (let i = max; i >= min; i--) years.push(String(i));
-  return years;
-}
-
-/* ---------------- ONLY ENGLISH + SPANISH ---------------- */
+/* ---------------- FIXED LANGS (ONLY EN + ES) ---------------- */
 function getLanguages() {
   return ["English", "Spanish"];
 }
 
-/* ---------------- TRANSLATIONS ---------------- */
-function loadTranslations(language) {
-  return {
-    ...(catalogsTranslations[DEFAULT_LANGUAGE] || {}),
-    ...(catalogsTranslations[language] || {}),
-  };
+/* ---------------- YEARS ---------------- */
+function generateArrayOfYears(maxYears) {
+  const now = new Date().getFullYear();
+  return Array.from({ length: maxYears }, (_, i) =>
+    String(now - i)
+  );
 }
 
-/* ---------------- CATALOG FACTORY ---------------- */
+/* ---------------- CATALOG ---------------- */
 function createCatalog(id, type, name, options = []) {
   return {
     id,
@@ -38,7 +28,7 @@ function createCatalog(id, type, name, options = []) {
     extra: [
       {
         name: "genre",
-        options: Array.isArray(options) ? [...new Set(options)] : [],
+        options: options || [],
         isRequired: false,
       },
       {
@@ -48,101 +38,78 @@ function createCatalog(id, type, name, options = []) {
   };
 }
 
-/* ---------------- DEFAULT CATALOGS ---------------- */
+/* ---------------- DEFAULT ---------------- */
 function getDefaultCatalogs() {
-  const types = ["movie", "series"];
-  const base = Object.keys(CATALOG_TYPES.default || {});
-
-  return base.flatMap((id) =>
-    types.map((type) => ({
-      id: `tmdb.${id}`,
-      type,
-      showInHome: true,
-    }))
-  );
+  return [
+    { id: "tmdb.top", type: "movie" },
+    { id: "tmdb.top", type: "series" },
+    { id: "tmdb.trending", type: "movie" },
+    { id: "tmdb.trending", type: "series" },
+    { id: "tmdb.latest", type: "movie" },
+    { id: "tmdb.latest", type: "series" },
+  ];
 }
 
-/* ---------------- MAIN MANIFEST ---------------- */
+/* ---------------- MANIFEST ---------------- */
 async function getManifest(config = {}) {
   const language = config.language || DEFAULT_LANGUAGE;
 
-  const userCatalogs =
-    Array.isArray(config.catalogs) && config.catalogs.length
-      ? config.catalogs
-      : getDefaultCatalogs();
+  const catalogs = config.catalogs?.length
+    ? config.catalogs
+    : getDefaultCatalogs();
 
-  loadTranslations(language);
+  let movieGenres = [];
+  let seriesGenres = [];
+
+  try {
+    const m = await getGenreList(language, "movie", config);
+    const s = await getGenreList(language, "series", config);
+
+    movieGenres = m?.map((g) => g.name) || [];
+    seriesGenres = s?.map((g) => g.name) || [];
+  } catch (e) {
+    console.error("Genre error:", e.message);
+  }
 
   const years = generateArrayOfYears(20);
 
-  /* ---------------- GENRES ---------------- */
-  let genres_movie = [];
-  let genres_series = [];
+  const final = catalogs.map((c) => {
+    const base =
+      c.type === "movie" ? movieGenres : seriesGenres;
 
-  try {
-    const movieGenres = await getGenreList(language, "movie", config);
-    const seriesGenres = await getGenreList(language, "series", config);
+    if (c.id.includes("year")) {
+      return createCatalog(c.id, c.type, "Year", years);
+    }
 
-    genres_movie = Array.isArray(movieGenres)
-      ? movieGenres.map((g) => g.name)
-      : [];
+    if (c.id.includes("language")) {
+      return createCatalog(c.id, c.type, "Language", getLanguages());
+    }
 
-    genres_series = Array.isArray(seriesGenres)
-      ? seriesGenres.map((g) => g.name)
-      : [];
-  } catch (e) {
-    console.error("Genre fetch failed:", e.message);
-  }
+    if (c.id.includes("trending")) {
+      return createCatalog(c.id, c.type, "Trending", [
+        "Day",
+        "Week",
+      ]);
+    }
 
-  /* ---------------- FILTER CATALOGS CLEAN ---------------- */
-  const catalogs = userCatalogs
-    .filter((c) => c && c.id && c.type)
-    .map((c) => {
-      const baseOptions =
-        c.type === "movie" ? genres_movie : genres_series;
+    if (c.id.includes("latest")) {
+      return createCatalog(c.id, c.type, "Latest", base);
+    }
 
-      if (c.id.includes("year")) {
-        return createCatalog(c.id, c.type, "Year", years);
-      }
-
-      if (c.id.includes("language")) {
-        return createCatalog(c.id, c.type, "Language", getLanguages());
-      }
-
-      if (c.id.includes("trending")) {
-        return createCatalog(c.id, c.type, "Trending", ["Day", "Week"]);
-      }
-
-      if (c.id.includes("latest")) {
-        return createCatalog(c.id, c.type, "Latest Releases", baseOptions);
-      }
-
-      return createCatalog(c.id, c.type, "Popular", baseOptions);
-    });
-
-  const host = process.env.HOST_NAME || "https://tmdb-addon-n0uj.onrender.com";
+    return createCatalog(c.id, c.type, "Popular", base);
+  });
 
   return {
     id: packageJson.name,
     version: packageJson.version,
+    name: "TMDB Addon",
+    description: "Clean working TMDB addon",
 
-    name: "The Movie Database Addon",
-    description: "TMDB addon with clean English/Spanish + working genres",
-
-    favicon: `${host}/favicon.png`,
-    logo: `${host}/logo.png`,
-    background: `${host}/background.png`,
-
-    resources: ["catalog", "meta"],
+    resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
     idPrefixes: ["tmdb:"],
 
-    behaviorHints: {
-      configurable: true,
-      configurationRequired: false,
-    },
-
-    catalogs,
+    catalogs: final,
   };
 }
 
