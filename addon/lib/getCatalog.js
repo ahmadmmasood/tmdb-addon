@@ -2,34 +2,78 @@ require("dotenv").config();
 
 const { getTmdbClient } = require("../utils/getTmdbClient");
 const { getGenreList } = require("./getGenreList");
-const { parseMedia } = require("../utils/parseProps");
 const CATALOG_TYPES = require("../static/catalog-types.json");
+const { parseMedia } = require("../utils/parseProps");
+
+/* ---------------- NETFLIX STYLE HELPERS ---------------- */
+
+function dedupe(arr) {
+  const seen = new Set();
+  return arr.filter((x) => {
+    if (!x || !x.id) return false;
+    if (seen.has(x.id)) return false;
+    seen.add(x.id);
+    return true;
+  });
+}
+
+function mapWithGenres(results, genreList, type) {
+  return results.map((el) => {
+    const genres = Array.isArray(el.genre_ids)
+      ? el.genre_ids.map(
+          (id) => genreList.find((g) => g.id === id)?.name || "Unknown"
+        )
+      : [];
+
+    return {
+      id: `tmdb:${el.id}`,
+      name: type === "movie" ? el.title : el.name,
+
+      genre: genres.length ? genres.slice(0, 3) : ["Unknown"],
+
+      poster: el.poster_path
+        ? `https://image.tmdb.org/t/p/w500${el.poster_path}`
+        : "",
+
+      background: el.backdrop_path
+        ? `https://image.tmdb.org/t/p/original${el.backdrop_path}`
+        : "",
+
+      posterShape: "regular",
+
+      imdbRating: el.vote_average ? el.vote_average.toFixed(1) : "N/A",
+
+      year:
+        type === "movie"
+          ? el.release_date?.substring(0, 4) || ""
+          : el.first_air_date?.substring(0, 4) || "",
+
+      type: type === "movie" ? "movie" : "series",
+
+      description: el.overview || "",
+    };
+  });
+}
+
+/* ---------------- MAIN ---------------- */
 
 async function getCatalog(type, language, page, id, genre, config) {
-  const tmdb = getTmdbClient(config);
+  const moviedb = getTmdbClient(config);
 
-  const mdblistKey = config.mdblistkey;
+  const fetchFunction =
+    type === "movie"
+      ? moviedb.discoverMovie.bind(moviedb)
+      : moviedb.discoverTv.bind(moviedb);
 
-  /* ---------------- MDBLIST ---------------- */
-  if (id?.startsWith("mdblist.")) {
-    const { fetchMDBListItems, parseMDBListItems } = require("../utils/mdbList");
-    const listId = id.split(".")[1];
+  let genreList = [];
 
-    const results = await fetchMDBListItems(listId, mdblistKey, language, page);
-    return await parseMDBListItems(results, type, genre, language, config);
+  try {
+    genreList = await getGenreList(language, type, config);
+  } catch (e) {
+    console.error("Genre load failed:", e.message);
   }
 
-  const genreList = await getGenreList(language, type, config);
-
-  const fetchFn =
-    type === "movie"
-      ? tmdb.discoverMovie.bind(tmdb)
-      : tmdb.discoverTv.bind(tmdb);
-
-  const providerId = id?.split(".")[1];
-  const isStreaming = providerId
-    ? Object.keys(CATALOG_TYPES.streaming || {}).includes(providerId)
-    : false;
+  /* ---------------- BASE PARAMS ---------------- */
 
   const params = {
     language,
@@ -37,18 +81,9 @@ async function getCatalog(type, language, page, id, genre, config) {
     "vote_count.gte": 10,
   };
 
-  /* ---------------- FIXED FILTERS ---------------- */
-
   if (id === "tmdb.year" && genre) {
     if (type === "movie") params.primary_release_year = genre;
     else params.first_air_date_year = genre;
-  }
-
-  if (id === "tmdb.language" && genre) {
-    const iso =
-      language === "es" ? "es" : "en";
-
-    params.with_original_language = iso;
   }
 
   if (id === "tmdb.top" && genre) {
@@ -56,71 +91,69 @@ async function getCatalog(type, language, page, id, genre, config) {
     if (g) params.with_genres = g.id;
   }
 
-  if (id === "tmdb.latest") {
-    params.sort_by = "release_date.desc";
-  }
-
-  if (id === "tmdb.trending") {
-    // TMDB handles trending differently internally
-    params.sort_by = "popularity.desc";
-  }
+  /* ---------------- FETCH ---------------- */
 
   async function fetchPage(p) {
     try {
-      const res = await fetchFn(p);
+      const res = await fetchFunction(p);
       if (!res?.results) return [];
-
-      return res.results
-        .map(parseMedia)
-        .filter((x) => x && x.id);
+      return mapWithGenres(res.results, genreList, type);
     } catch (e) {
-      console.error("[fetchPage]", e.message);
+      console.error("fetchPage error:", e.message);
       return [];
     }
   }
 
   try {
-    const pageResults = await Promise.all([
-      fetchPage(params),
+    const startPage = parseInt(page) || 1;
+
+    const [page1, page2] = await Promise.all([
+      fetchPage({ ...params, page: startPage }),
+      fetchPage({ ...params, page: startPage + 1 }),
     ]);
 
-    const metas = [];
+    let metas = dedupe([...page1, ...page2]);
 
-    for (const list of pageResults) {
-      for (const item of list) {
-        if (!metas.find((m) => m.id === item.id)) {
-          metas.push(item);
-        }
-      }
-    }
+    /* ---------------- EMPTY SAFE STATE ---------------- */
 
     if (!metas.length) {
       return {
         metas: [
           {
-            id: "tmdb:no-results",
+            id: "tmdb:no-content",
             type,
             name: "No Results",
-            description: "No content returned from TMDB",
+            poster: "",
+            background: "",
+            genre: ["Unknown"],
+            description: "No content found for this category.",
           },
         ],
       };
     }
 
-    return { metas: metas.slice(0, 20) };
-  } catch (e) {
-    console.error("[getCatalog]", e);
+    return {
+      metas: metas.slice(0, 20),
+    };
+  } catch (error) {
+    console.error("getCatalog error:", error);
+
     return {
       metas: [
         {
           id: "tmdb:error",
           type,
-          name: "Error Loading Catalog",
-          description: e.message,
+          name: "Error Loading Content",
+          poster: "",
+          background: "",
+          genre: ["Unknown"],
+          description: error.message,
         },
       ],
     };
   }
 }
+
+/* ---------------- EXPORT ---------------- */
 
 module.exports = { getCatalog };
