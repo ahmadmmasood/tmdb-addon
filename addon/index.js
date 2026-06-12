@@ -11,7 +11,6 @@ const { getManifest, DEFAULT_LANGUAGE } = require("./lib/getManifest");
 const { getMeta } = require("./lib/getMeta");
 const { cacheWrapMeta } = require("./lib/getCache");
 const { getTrending } = require("./lib/getTrending");
-
 const { parseConfig } = require("./utils/parseProps");
 
 const { getFavorites, getWatchList } = require("./lib/getPersonalLists");
@@ -22,6 +21,23 @@ const {
 } = require("./lib/getTraktLists");
 
 const { findMovieStream, findSeriesStream } = require("./lib/xtream");
+
+/* ---------------- HELP: NORMALIZE OUTPUT ---------------- */
+
+function normalizeMetas(data) {
+  if (!data) return [];
+
+  // already correct
+  if (Array.isArray(data)) return data;
+
+  // { metas: [...] }
+  if (Array.isArray(data.metas)) return data.metas;
+
+  // { metas: { metas: [...] } }  <-- your bug case
+  if (data.metas && Array.isArray(data.metas.metas)) return data.metas.metas;
+
+  return [];
+}
 
 /* ---------------- MIDDLEWARE ---------------- */
 
@@ -75,8 +91,9 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   const page = skip ? Math.floor(skip / 20) + 1 : 1;
 
   try {
+    let metas;
+
     const args = [type, language, page];
-    let metas = [];
 
     if (search) {
       metas = await getSearch(id, type, language, search, config);
@@ -108,11 +125,11 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
       }
     }
 
-    // 🔥 SAFE RESPONSE (UHF/STREMIO COMPATIBLE)
-    const result = metas?.metas ? metas.metas : metas;
+    const normalized = normalizeMetas(metas);
 
+    // ALWAYS enforce correct format
     return res.json({
-      metas: Array.isArray(result) ? result : [],
+      metas: normalized,
     });
 
   } catch (e) {
@@ -125,7 +142,6 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
           name: "Error loading catalog",
           type,
           description: e.message,
-          genre: [],
         },
       ],
     });
@@ -136,14 +152,9 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
 
 addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
   try {
-    let config = {};
-    try {
-      config = parseConfig(req.params.catalogChoices) || {};
-    } catch {
-      config = {};
-    }
-
+    const config = parseConfig(req.params.catalogChoices) || {};
     const language = config.language || DEFAULT_LANGUAGE;
+
     const tmdbId = req.params.id.split(":")[1];
 
     const resp = await cacheWrapMeta(
@@ -174,24 +185,24 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
     const title = req.query.title || "";
     const year = req.query.year || "";
 
-    if (!title) return res.json({ streams: [] });
-
-    let stream = null;
-
-    if (type === "movie") {
-      stream = await findMovieStream(title, year, config);
-    } else {
-      stream = await findSeriesStream(title, config);
+    if (!title) {
+      return res.json({ streams: [] });
     }
 
-    if (!stream?.url) return res.json({ streams: [] });
+    let stream =
+      type === "movie"
+        ? await findMovieStream(title, year, config)
+        : await findSeriesStream(title, config);
+
+    if (!stream?.url) {
+      return res.json({ streams: [] });
+    }
 
     return res.json({
       streams: [
         {
           title: stream.title || "Stream",
           url: stream.url,
-          behaviorHints: { bingeGroup: "default" },
         },
       ],
     });
