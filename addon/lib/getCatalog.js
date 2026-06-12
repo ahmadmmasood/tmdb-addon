@@ -4,21 +4,21 @@ const { getGenreList } = require("./getGenreList");
 const { getLanguages } = require("./getLanguages");
 const { parseMedia } = require("../utils/parseProps");
 const { fetchMDBListItems, parseMDBListItems } = require("../utils/mdbList");
-const { isMovieReleasedInRegion, isMovieReleasedDigitally } = require("./releaseFilter");
-const { rateLimitedMapFiltered } = require("../utils/rateLimiter");
 const CATALOG_TYPES = require("../static/catalog-types.json");
 
 async function getCatalog(type, language, page, id, genre, config) {
   const moviedb = getTmdbClient(config);
   const mdblistKey = config.mdblistkey;
 
+  /* ---------------- MDBLIST ---------------- */
   if (id.startsWith("mdblist.")) {
     const listId = id.split(".")[1];
     const results = await fetchMDBListItems(listId, mdblistKey, language, page);
-    const parseResults = await parseMDBListItems(results, type, genre, language, config);
-    return parseResults;
+    const parsed = await parseMDBListItems(results, type, genre, language, config);
+    return parsed;
   }
 
+  /* ---------------- BASE PARAMS ---------------- */
   const genreList = await getGenreList(language, type, config);
   const parameters = await buildParameters(type, language, page, id, genre, genreList, config);
 
@@ -29,26 +29,22 @@ async function getCatalog(type, language, page, id, genre, config) {
 
   const providerId = id.split(".")[1];
   const isStreaming = Object.keys(CATALOG_TYPES.streaming).includes(providerId);
+
   const isStrictMode =
     config.strictRegionFilter === "true" || config.strictRegionFilter === true;
+
   const isDigitalFilterMode =
     config.digitalReleaseFilter === "true" || config.digitalReleaseFilter === true;
 
-  const userRegion =
-    language && language.split("-")[1] ? language.split("-")[1] : null;
-
+  /* ---------------- SAFE FETCH ---------------- */
   async function fetchPage(params) {
     try {
       const res = await fetchFunction(params);
 
-      // IMPORTANT CHANGE:
-      // No getMeta() calls anymore (this was freezing everything)
+      if (!res || !Array.isArray(res.results)) return [];
 
-      let metas = res.results.map((item) => {
-        return parseMedia(item);
-      });
-
-      return metas;
+      // IMPORTANT: lightweight mapping only
+      return res.results.map((item) => parseMedia(item));
     } catch (err) {
       console.error("[fetchPage error]", err.message);
       return [];
@@ -56,6 +52,7 @@ async function getCatalog(type, language, page, id, genre, config) {
   }
 
   try {
+    /* ---------------- PAGINATION ---------------- */
     const needsExtraFetch =
       type === "movie" && !isStreaming && (isStrictMode || isDigitalFilterMode);
 
@@ -71,6 +68,7 @@ async function getCatalog(type, language, page, id, genre, config) {
 
     const pageResults = await Promise.all(pagePromises);
 
+    /* ---------------- MERGE RESULTS ---------------- */
     let metas = [];
 
     for (const pageMetas of pageResults) {
@@ -81,6 +79,7 @@ async function getCatalog(type, language, page, id, genre, config) {
       }
     }
 
+    /* ---------------- EMPTY STATE ---------------- */
     if (metas.length === 0) {
       return {
         metas: [
@@ -90,16 +89,20 @@ async function getCatalog(type, language, page, id, genre, config) {
             name: "No Content Available",
             poster: "",
             background: "",
-            description: "No content found.",
+            description: "No content found for this selection.",
             genres: []
           }
         ]
       };
     }
 
-    return { metas: metas.slice(0, 20) };
+    /* ---------------- RETURN ---------------- */
+    return {
+      metas: metas.slice(0, 20)
+    };
   } catch (error) {
     console.error("[getCatalog] Error:", error);
+
     return {
       metas: [
         {
@@ -116,11 +119,39 @@ async function getCatalog(type, language, page, id, genre, config) {
   }
 }
 
-/* KEEP YOUR EXISTING FUNCTIONS BELOW (unchanged) */
-
+/* ---------------- PARAMETERS ---------------- */
 async function buildParameters(type, language, page, id, genre, genreList, config) {
   const languages = await getLanguages(config);
-  const parameters = { language, page, "vote_count.gte": 10 };
+
+  const parameters = {
+    language,
+    page,
+    "vote_count.gte": 10
+  };
+
+  const providerId = id.split(".")[1];
+  const isStreaming = Object.keys(CATALOG_TYPES.streaming).includes(providerId);
+
+  if (id === "tmdb.year" && genre) {
+    const year = genre;
+    if (type === "movie") {
+      parameters.primary_release_year = year;
+    } else {
+      parameters.first_air_date_year = year;
+    }
+  }
+
+  if (id === "tmdb.language") {
+    const lang = languages.find((l) => l.name === genre);
+    parameters.with_original_language = lang
+      ? lang.iso_639_1.split("-")[0]
+      : language.split("-")[0];
+  }
+
+  if (id === "tmdb.top" && genre) {
+    const genreData = genreList.find((g) => g.name === genre);
+    if (genreData) parameters.with_genres = genreData.id;
+  }
 
   return parameters;
 }
