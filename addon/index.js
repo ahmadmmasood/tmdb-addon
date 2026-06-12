@@ -1,6 +1,4 @@
 const express = require("express");
-const path = require("path");
-
 const addon = express();
 
 /* ---------------- IMPORTS ---------------- */
@@ -31,6 +29,7 @@ const { findMovieStream, findSeriesStream } = require("./lib/xtream");
 addon.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   next();
 });
 
@@ -42,8 +41,8 @@ addon.use(analytics.middleware);
 addon.get("/", (req, res) => {
   res.json({
     name: "TMDB + Xtream Addon",
-    manifest: "/manifest.json",
-    status: "running"
+    status: "running",
+    manifest: "/manifest.json"
   });
 });
 
@@ -70,10 +69,9 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   const { genre, skip, search } = req.query;
   const page = skip ? Math.floor(skip / 20) + 1 : 1;
 
-  let metas = [];
-
   try {
     const args = [type, language, page];
+    let metas = [];
 
     if (search) {
       metas = await getSearch(id, type, language, search, config);
@@ -92,14 +90,10 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
           break;
 
         case "trakt.watchlist":
-          if (!config.traktAccessToken)
-            throw new Error("Missing Trakt token");
           metas = await getTraktWatchlist(...args, genre, config.traktAccessToken);
           break;
 
         case "trakt.recommendations":
-          if (!config.traktAccessToken)
-            throw new Error("Missing Trakt token");
           metas = await getTraktRecommendations(...args, genre, config.traktAccessToken);
           break;
 
@@ -124,11 +118,10 @@ addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
     const language = config.language || DEFAULT_LANGUAGE;
 
     const tmdbId = req.params.id.split(":")[1];
-    const type = req.params.type;
 
     const resp = await cacheWrapMeta(
-      `${language}:${type}:${tmdbId}`,
-      () => getMeta(type, language, tmdbId, config)
+      `${language}:${req.params.type}:${tmdbId}`,
+      () => getMeta(req.params.type, language, tmdbId, config)
     );
 
     res.json(resp);
@@ -138,17 +131,21 @@ addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
   }
 });
 
-/* ---------------- XTREAM STREAM ---------------- */
+/* ---------------- STREAM (FIXED FOR UHF) ---------------- */
 
 addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
-  const { type } = req.params;
+  const { type, id } = req.params;
   const config = parseConfig(req.params.catalogChoices) || {};
 
   try {
+    let stream = null;
+
     const title = req.query.title || "";
     const year = req.query.year || "";
 
-    let stream = null;
+    if (!title) {
+      return res.json({ streams: [] });
+    }
 
     if (type === "movie") {
       stream = await findMovieStream(title, year, config);
@@ -156,41 +153,25 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
       stream = await findSeriesStream(title, config);
     }
 
-    if (!stream) {
-      return res.json({
-        streams: [
-          {
-            title: "No match found in Xtream",
-            url: "",
-            behaviorHints: { notWebReady: true }
-          }
-        ]
-      });
+    if (!stream || !stream.url) {
+      return res.json({ streams: [] });
     }
 
     return res.json({
       streams: [
         {
+          title: stream.title || "Xtream Stream",
           url: stream.url,
-          title: stream.title,
           behaviorHints: {
             bingeGroup: "default"
           }
         }
       ]
     });
+
   } catch (e) {
     console.error("Stream error:", e);
-
-    res.json({
-      streams: [
-        {
-          title: "Stream error",
-          url: "",
-          behaviorHints: { notWebReady: true }
-        }
-      ]
-    });
+    return res.json({ streams: [] });
   }
 });
 
