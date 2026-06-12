@@ -1,6 +1,5 @@
 require("dotenv").config();
 const { getGenreList } = require("./getGenreList");
-const { getLanguages } = require("./getLanguages");
 const packageJson = require("../../package.json");
 const catalogsTranslations = require("../static/translations.json");
 const CATALOG_TYPES = require("../static/catalog-types.json");
@@ -16,27 +15,9 @@ function generateArrayOfYears(maxYears) {
   return years;
 }
 
-/* ---------------- LANGUAGE SORT ---------------- */
-function setOrderLanguage(language, languagesArray) {
-  if (!Array.isArray(languagesArray)) return [];
-
-  const uniqueMap = new Map();
-
-  for (const lang of languagesArray) {
-    if (lang?.name) uniqueMap.set(lang.name, lang);
-  }
-
-  const list = [...uniqueMap.values()];
-  list.sort((a, b) => a.name.localeCompare(b.name));
-
-  const preferred = list.find((l) => l.iso_639_1 === language);
-
-  if (!preferred) return list.map((l) => l.name);
-
-  return [
-    preferred.name,
-    ...list.filter((l) => l.name !== preferred.name).map((l) => l.name),
-  ];
+/* ---------------- ONLY ENGLISH + SPANISH ---------------- */
+function getLanguages() {
+  return ["English", "Spanish"];
 }
 
 /* ---------------- TRANSLATIONS ---------------- */
@@ -60,7 +41,9 @@ function createCatalog(id, type, name, options = []) {
         options: Array.isArray(options) ? [...new Set(options)] : [],
         isRequired: false,
       },
-      { name: "skip" },
+      {
+        name: "skip",
+      },
     ],
   };
 }
@@ -83,15 +66,16 @@ function getDefaultCatalogs() {
 async function getManifest(config = {}) {
   const language = config.language || DEFAULT_LANGUAGE;
 
-  const userCatalogs = [
-    { id: "tmdb.top", type: "movie" },
-    { id: "tmdb.top", type: "series" }
-  ];
+  const userCatalogs =
+    Array.isArray(config.catalogs) && config.catalogs.length
+      ? config.catalogs
+      : getDefaultCatalogs();
 
   loadTranslations(language);
 
   const years = generateArrayOfYears(20);
 
+  /* ---------------- GENRES ---------------- */
   let genres_movie = [];
   let genres_series = [];
 
@@ -100,61 +84,56 @@ async function getManifest(config = {}) {
     const seriesGenres = await getGenreList(language, "series", config);
 
     genres_movie = Array.isArray(movieGenres)
-      ? [...new Set(movieGenres.map((g) => g.name))]
+      ? movieGenres.map((g) => g.name)
       : [];
 
     genres_series = Array.isArray(seriesGenres)
-      ? [...new Set(seriesGenres.map((g) => g.name))]
+      ? seriesGenres.map((g) => g.name)
       : [];
   } catch (e) {
     console.error("Genre fetch failed:", e.message);
   }
 
-  const filterLanguages = ["English", "Spanish"];
+  /* ---------------- FILTER CATALOGS CLEAN ---------------- */
+  const catalogs = userCatalogs
+    .filter((c) => c && c.id && c.type)
+    .map((c) => {
+      const baseOptions =
+        c.type === "movie" ? genres_movie : genres_series;
 
-  try {
-    const languagesArray = await getLanguages(config);
-    filterLanguages = setOrderLanguage(language, languagesArray);
-  } catch (e) {
-    console.error("Language fetch failed:", e.message);
-  }
+      if (c.id.includes("year")) {
+        return createCatalog(c.id, c.type, "Year", years);
+      }
 
-  const catalogs = [
-  {
-    id: "tmdb.top",
-    type: "movie",
-    name: "Popular Movies",
-    pageSize: 20,
-    extra: []
-  },
-  {
-    id: "tmdb.top",
-    type: "series",
-    name: "Popular Series",
-    pageSize: 20,
-    extra: []
-  }
-];
+      if (c.id.includes("language")) {
+        return createCatalog(c.id, c.type, "Language", getLanguages());
+      }
 
-  const host =
-    process.env.HOST_NAME ||
-    "https://tmdb-addon-n0uj.onrender.com";
+      if (c.id.includes("trending")) {
+        return createCatalog(c.id, c.type, "Trending", ["Day", "Week"]);
+      }
+
+      if (c.id.includes("latest")) {
+        return createCatalog(c.id, c.type, "Latest Releases", baseOptions);
+      }
+
+      return createCatalog(c.id, c.type, "Popular", baseOptions);
+    });
+
+  const host = process.env.HOST_NAME || "https://tmdb-addon-n0uj.onrender.com";
 
   return {
     id: packageJson.name,
     version: packageJson.version,
 
     name: "The Movie Database Addon",
-    description:
-      "TMDB addon providing catalogs, metadata and streams.",
+    description: "TMDB addon with clean English/Spanish + working genres",
 
     favicon: `${host}/favicon.png`,
     logo: `${host}/logo.png`,
     background: `${host}/background.png`,
 
-    // 🔥 THIS IS THE FIX
-    resources: ["catalog", "meta", "stream"],
-
+    resources: ["catalog", "meta"],
     types: ["movie", "series"],
     idPrefixes: ["tmdb:"],
 
