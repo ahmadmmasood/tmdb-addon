@@ -1,114 +1,114 @@
 require("dotenv").config();
 const { getGenreList } = require("./getGenreList");
 const { getLanguages } = require("./getLanguages");
-const { getGenresFromMDBList } = require("../utils/mdbList");
-const packageJson = require("../../package.json");
 const catalogsTranslations = require("../static/translations.json");
+const packageJson = require("../../package.json");
 const CATALOG_TYPES = require("../static/catalog-types.json");
 
 const DEFAULT_LANGUAGE = "en-US";
 
+/* ---------------- DEFAULT CATALOGS ---------------- */
+function getDefaultCatalogs() {
+  return [
+    { id: "tmdb.top", type: "movie", showInHome: true },
+    { id: "tmdb.top", type: "series", showInHome: true },
+    { id: "tmdb.trending", type: "movie", showInHome: true },
+    { id: "tmdb.trending", type: "series", showInHome: true },
+    { id: "tmdb.year", type: "movie", showInHome: true },
+    { id: "tmdb.year", type: "series", showInHome: true },
+    { id: "tmdb.latest", type: "movie", showInHome: true },
+    { id: "tmdb.latest", type: "series", showInHome: true }
+  ];
+}
+
 /* ---------------- HELPERS ---------------- */
+
+function loadTranslations(language) {
+  const base = catalogsTranslations[DEFAULT_LANGUAGE] || {};
+  const selected = catalogsTranslations[language] || {};
+  return { ...base, ...selected };
+}
 
 function generateArrayOfYears(maxYears) {
   const max = new Date().getFullYear();
   const min = max - maxYears;
-  const years = [];
-  for (let i = max; i >= min; i--) years.push(i.toString());
-  return years;
+  return Array.from({ length: max - min + 1 }, (_, i) =>
+    (max - i).toString()
+  );
 }
 
 function setOrderLanguage(language, languagesArray) {
-  const languageObj = languagesArray.find((l) => l.iso_639_1 === language);
-  const fromIndex = languagesArray.indexOf(languageObj);
-  if (fromIndex > -1) {
-    const element = languagesArray.splice(fromIndex, 1)[0];
-    languagesArray = languagesArray.sort((a, b) => (a.name > b.name ? 1 : -1));
-    languagesArray.splice(0, 0, element);
+  const langObj = languagesArray.find((l) => l.iso_639_1 === language);
+  if (!langObj) return languagesArray.map((l) => l.name);
+
+  const copy = [...languagesArray];
+  const index = copy.indexOf(langObj);
+
+  if (index > -1) {
+    copy.splice(index, 1);
+    copy.sort((a, b) => (a.name > b.name ? 1 : -1));
+    copy.unshift(langObj);
   }
-  return [...new Set(languagesArray.map((el) => el.name))];
+
+  return copy.map((l) => l.name);
 }
 
-function loadTranslations(language) {
-  const defaultTranslations = catalogsTranslations[DEFAULT_LANGUAGE] || {};
-  const selectedTranslations = catalogsTranslations[language] || {};
-  return { ...defaultTranslations, ...selectedTranslations };
+function getCatalogDefinition(catalogId) {
+  const [, type] = catalogId.split(".");
+  for (const cat of Object.values(CATALOG_TYPES)) {
+    if (cat[type]) return cat[type];
+  }
+  return null;
 }
 
-/* ---------------- CATALOG HELPERS ---------------- */
-
-function createCatalog(
-  id,
-  type,
-  catalogDef,
-  options,
-  tmdbPrefix,
-  translatedCatalogs,
-  showInHome = false
-) {
+function createCatalog(id, type, def, options, tmdbPrefix, t, showInHome) {
   const extra = [];
 
-  if (catalogDef.extraSupported?.includes("genre")) {
+  if (def?.extraSupported?.includes("genre")) {
     extra.push({
       name: "genre",
       options,
-      isRequired: showInHome ? false : true
+      isRequired: !showInHome
     });
   }
 
-  if (catalogDef.extraSupported?.includes("search")) {
-    extra.push({ name: "search" });
-  }
-
-  if (catalogDef.extraSupported?.includes("skip")) {
-    extra.push({ name: "skip" });
-  }
+  if (def?.extraSupported?.includes("search")) extra.push({ name: "search" });
+  if (def?.extraSupported?.includes("skip")) extra.push({ name: "skip" });
 
   return {
     id,
     type,
-    name: `${tmdbPrefix ? "TMDB - " : ""}${translatedCatalogs[catalogDef.nameKey] || catalogDef.nameKey}`,
+    name: `${tmdbPrefix ? "TMDB - " : ""}${t[def.nameKey] || def.nameKey}`,
     pageSize: 20,
     extra
   };
 }
 
-function getCatalogDefinition(catalogId) {
-  const [_, type] = catalogId.split(".");
-  for (const category of Object.keys(CATALOG_TYPES)) {
-    if (CATALOG_TYPES[category][type]) return CATALOG_TYPES[category][type];
-  }
-  return null;
-}
+function getOptions(def, type, showInHome, opts) {
+  if (!def) return [];
 
-function getOptionsForCatalog(catalogDef, type, showInHome, options) {
-  if (!catalogDef) return [];
+  const movie = showInHome ? opts.genres_movie : ["Top", ...opts.genres_movie];
+  const series = showInHome ? opts.genres_series : ["Top", ...opts.genres_series];
 
-  const movieGenres = showInHome ? [...options.genres_movie] : ["Top", ...options.genres_movie];
-  const seriesGenres = showInHome ? [...options.genres_series] : ["Top", ...options.genres_series];
-
-  switch (catalogDef.nameKey) {
+  switch (def.nameKey) {
     case "year":
-      return options.years;
+      return opts.years;
     case "language":
-      return options.filterLanguages;
+      return opts.filterLanguages;
     default:
-      return type === "movie" ? movieGenres : seriesGenres;
+      return type === "movie" ? movie : series;
   }
 }
 
-/* ---------------- MAIN MANIFEST ---------------- */
+/* ---------------- MAIN ---------------- */
 
-async function getManifest(config) {
+async function getManifest(config = {}) {
   const language = config.language || DEFAULT_LANGUAGE;
   const tmdbPrefix = config.tmdbPrefix === "true";
 
-  const sessionId = config.sessionId;
-  const userCatalogs = config.catalogs || [];
+  const translated = loadTranslations(language);
 
-  const translatedCatalogs = loadTranslations(language);
-
-  // ✅ FIX: ALWAYS SAFE HOST
+  // ✅ SAFE HOST
   const host =
     process.env.HOST_NAME?.replace(/\/$/, "") ||
     "https://tmdb-addon-n0uj.onrender.com";
@@ -123,44 +123,40 @@ async function getManifest(config) {
     .then((g) => (Array.isArray(g) ? g.map((x) => x.name).sort() : []))
     .catch(() => []);
 
-  const languagesArray = await getLanguages(config);
+  const languagesArray = await getLanguages(config).catch(() => []);
   const filterLanguages = setOrderLanguage(language, languagesArray);
 
   const options = { years, genres_movie, genres_series, filterLanguages };
 
-  let catalogs = await Promise.all(
-    userCatalogs.map((userCatalog) => {
-      const catalogDef = getCatalogDefinition(userCatalog.id);
-      if (!catalogDef) return null;
+  // 🔥 FIX: NEVER allow empty catalogs
+  const userCatalogs =
+    config.catalogs && config.catalogs.length
+      ? config.catalogs
+      : getDefaultCatalogs();
 
-      const catalogOptions = getOptionsForCatalog(
-        catalogDef,
-        userCatalog.type,
-        userCatalog.showInHome,
-        options
-      );
+  let catalogs = userCatalogs
+    .map((c) => {
+      const def = getCatalogDefinition(c.id);
+      if (!def) return null;
+
+      const opts = getOptions(def, c.type, c.showInHome, options);
 
       return createCatalog(
-        userCatalog.id,
-        userCatalog.type,
-        catalogDef,
-        catalogOptions,
+        c.id,
+        c.type,
+        def,
+        opts,
         tmdbPrefix,
-        translatedCatalogs,
-        userCatalog.showInHome
+        translated,
+        c.showInHome
       );
     })
-  );
-
-  catalogs = catalogs.filter(Boolean);
+    .filter(Boolean);
 
   return {
-    // ✅ FIX: stable ID (IMPORTANT for UHF / Stremio)
     id: "tmdb-addon",
-
     version: packageJson.version,
 
-    // ✅ FIX: NEVER undefined
     favicon: `${host}/favicon.png`,
     logo: `${host}/logo.png`,
     background: `${host}/background.png`,
