@@ -1,10 +1,9 @@
 const axios = require("axios");
 
+/* ---------------- CONFIG HELPERS ---------------- */
+
 function getBase(config) {
-  return (
-    config.xtreamUrl ||
-    process.env.XTREAM_URL
-  );
+  return config.xtreamUrl || process.env.XTREAM_URL;
 }
 
 function getAuth(config) {
@@ -13,6 +12,8 @@ function getAuth(config) {
     password: config.xtreamPass || process.env.XTREAM_PASS
   };
 }
+
+/* ---------------- XTREAM REQUEST ---------------- */
 
 async function xtreamRequest(config, action, extra = {}) {
   const base = getBase(config);
@@ -37,17 +38,27 @@ async function xtreamRequest(config, action, extra = {}) {
   return res.data;
 }
 
-/* ---------------- MOVIE SEARCH ---------------- */
+/* ---------------- NORMALIZER ---------------- */
+
+function normalize(str = "") {
+  return str
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+/* ---------------- MOVIE STREAM ---------------- */
+
 async function findMovieStream(title, year, config) {
   const data = await xtreamRequest(config, "get_vod_streams");
 
   if (!Array.isArray(data)) return null;
 
-  const cleanTitle = title.toLowerCase();
+  const target = normalize(title);
 
   const match = data.find((item) => {
-    const name = (item.name || "").toLowerCase();
-    return name.includes(cleanTitle);
+    const name = normalize(item.name || "");
+    return name.includes(target) || target.includes(name);
   });
 
   if (!match) return null;
@@ -61,17 +72,19 @@ async function findMovieStream(title, year, config) {
   };
 }
 
-/* ---------------- SERIES EPISODE ---------------- */
+/* ---------------- SERIES STREAM ---------------- */
+
 async function findSeriesStream(title, config) {
   const data = await xtreamRequest(config, "get_series");
 
   if (!Array.isArray(data)) return null;
 
-  const cleanTitle = title.toLowerCase();
+  const target = normalize(title);
 
-  const match = data.find((item) =>
-    (item.name || "").toLowerCase().includes(cleanTitle)
-  );
+  const match = data.find((item) => {
+    const name = normalize(item.name || "");
+    return name.includes(target) || target.includes(name);
+  });
 
   if (!match) return null;
 
@@ -79,9 +92,18 @@ async function findSeriesStream(title, config) {
     series_id: match.series_id
   });
 
-  const firstEpisode =
-    episodes?.episodes &&
-    Object.values(episodes.episodes)[0]?.[0];
+  if (!episodes?.episodes) return null;
+
+  const seasons = Object.values(episodes.episodes);
+
+  let firstEpisode = null;
+
+  for (const season of seasons) {
+    if (Array.isArray(season) && season.length) {
+      firstEpisode = season[0];
+      break;
+    }
+  }
 
   if (!firstEpisode) return null;
 
@@ -93,6 +115,8 @@ async function findSeriesStream(title, config) {
     title: match.name
   };
 }
+
+/* ---------------- EXPORTS ---------------- */
 
 module.exports = {
   findMovieStream,
