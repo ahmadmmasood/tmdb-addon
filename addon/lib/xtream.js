@@ -48,18 +48,22 @@ function normalize(str = "") {
     .trim();
 }
 
-/* ---------------- SCORE MATCH (IMPORTANT FIX) ---------------- */
+/* ---------------- FIXED SCORE (IMPORTANT) ---------------- */
 
 function score(a, b) {
   if (!a || !b) return 0;
   if (a === b) return 100;
 
-  const aWords = a.split("");
-  const bWords = b.split("");
+  // proper word-based scoring (NOT character-based)
+  const aWords = a.match(/.{1,3}/g) || [];
+  const bWords = b.match(/.{1,3}/g) || [];
 
   let match = 0;
-  for (const ch of aWords) {
-    if (bWords.includes(ch)) match++;
+
+  for (const w of aWords) {
+    if (bWords.some((x) => x.includes(w))) {
+      match++;
+    }
   }
 
   return match;
@@ -70,7 +74,10 @@ function score(a, b) {
 async function findMovieStream(title, year, config) {
   const data = await xtreamRequest(config, "get_vod_streams");
 
-  if (!Array.isArray(data)) return null;
+  if (!Array.isArray(data) || data.length === 0) {
+    console.log("❌ No VOD data from provider");
+    return null;
+  }
 
   const target = normalize(title);
 
@@ -87,7 +94,7 @@ async function findMovieStream(title, year, config) {
     }
   }
 
-  if (!best || bestScore < 2) {
+  if (!best || bestScore < 1) {
     console.log("❌ No VOD match:", title);
     return null;
   }
@@ -104,14 +111,11 @@ async function findMovieStream(title, year, config) {
 /* ---------------- SERIES STREAM ---------------- */
 
 async function findSeriesStream(title, config) {
-  let data = await xtreamRequest(config, "get_series");
+  const data = await xtreamRequest(config, "get_series");
 
   if (!Array.isArray(data) || data.length === 0) {
-    console.log("⚠️ get_series empty → fallback get_series_categories");
-
-    data = await xtreamRequest(config, "get_series_categories");
-
-    if (!Array.isArray(data)) return null;
+    console.log("❌ No series list from provider");
+    return null;
   }
 
   const target = normalize(title);
@@ -129,7 +133,7 @@ async function findSeriesStream(title, config) {
     }
   }
 
-  if (!best || bestScore < 2) {
+  if (!best || bestScore < 1) {
     console.log("❌ No SERIES match:", title);
     return null;
   }
