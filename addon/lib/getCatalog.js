@@ -15,19 +15,29 @@ function dedupe(arr) {
   });
 }
 
-/* 🔥 FIX: EXTRACT GENRE FROM PATH (NOT QUERY) */
-function extractGenreFromId(id) {
-  if (!id) return { cleanId: id, genre: null };
+/* 🔥 FIX: ROBUST GENRE + ID PARSING */
+function parseCatalogId(rawId) {
+  if (!rawId) return { baseId: null, genre: null };
 
-  const match = id.match(/genre=(.+)$/);
+  let id = String(rawId);
 
-  if (!match) {
-    return { cleanId: id, genre: null };
+  try {
+    id = decodeURIComponent(id);
+  } catch {}
+
+  id = id.replace(".json", "");
+
+  let genre = null;
+
+  const genreMatch = id.match(/genre=(.+)$/);
+  if (genreMatch) {
+    genre = genreMatch[1];
+    id = id.split("/genre=")[0];
   }
 
   return {
-    cleanId: id.split("/genre=")[0],
-    genre: decodeURIComponent(match[1].replace(".json", ""))
+    baseId: id,
+    genre,
   };
 }
 
@@ -92,16 +102,16 @@ async function getCatalog(type, language, page, id, genre, config) {
     include_adult: false,
   };
 
-  /* 🔥 FIX: PARSE REAL GENRE FROM ID */
-  const parsed = extractGenreFromId(id);
+  /* ---------------- DEBUG ---------------- */
+  const parsed = parseCatalogId(id);
 
   console.log("👉 RAW ID:", id);
-  console.log("👉 CLEAN ID:", parsed.cleanId);
+  console.log("👉 BASE ID:", parsed.baseId);
   console.log("👉 EXTRACTED GENRE:", parsed.genre);
 
   /* ---------------- GENRE FILTER ---------------- */
 
-  if (parsed.genre && id.includes("tmdb.top")) {
+  if (parsed.genre && parsed.baseId?.includes("tmdb.top")) {
     const g = genreList.find((x) =>
       x?.name?.toLowerCase() === parsed.genre.toLowerCase()
     );
@@ -109,6 +119,8 @@ async function getCatalog(type, language, page, id, genre, config) {
     if (g?.id) {
       console.log("👉 GENRE MATCHED:", g.name);
       params.with_genres = g.id;
+    } else {
+      console.log("⚠️ GENRE NOT FOUND - skipping filter");
     }
   }
 
@@ -133,6 +145,8 @@ async function getCatalog(type, language, page, id, genre, config) {
 
     let metas = dedupe([...page1, ...page2]);
 
+    /* ---------------- SAFE FALLBACK ---------------- */
+
     if (!metas.length) {
       return {
         metas: [
@@ -149,7 +163,9 @@ async function getCatalog(type, language, page, id, genre, config) {
       };
     }
 
-    return { metas: metas.slice(0, 20) };
+    return {
+      metas: metas.slice(0, 20),
+    };
   } catch (error) {
     console.error("getCatalog error:", error);
 
