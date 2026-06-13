@@ -65,71 +65,63 @@ addon.get("/:catalogChoices?/manifest.json", async (req, res) => {
   }
 });
 
-/* ---------------- CATALOG (FIXED - SAFE DROP-IN) ---------------- */
+/* ---------------- CATALOG (PRIMARY ROUTE) ---------------- */
 
 addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
-  const { catalogChoices, type } = req.params;
-
-  let id = String(req.params.id || "");
-
   try {
-    id = decodeURIComponent(id);
-  } catch {}
+    const { catalogChoices, type } = req.params;
 
-  id = id
-    .replace("/genre=", "")
-    .replace("genre=", "")
-    .replace(".json", "")
-    .trim();
+    let id = String(req.params.id || "");
 
-  let config = {};
-  try {
-    config = parseConfig(catalogChoices) || {};
-  } catch {
-    config = {};
-  }
+    try {
+      id = decodeURIComponent(id);
+    } catch {}
 
-  const language = config.language || DEFAULT_LANGUAGE;
-  const { genre, skip, search } = req.query;
-  const page = skip ? Math.floor(skip / 20) + 1 : 1;
+    id = id
+      .replace("/genre=", "")
+      .replace("genre=", "")
+      .replace(".json", "")
+      .trim();
 
-  try {
-    let result = [];
+    const config = parseConfig(catalogChoices) || {};
+    const language = config.language || DEFAULT_LANGUAGE;
 
-    const args = [type, language, page];
+    const { genre, skip, search } = req.query;
+    const page = skip ? Math.floor(skip / 20) + 1 : 1;
+
+    let result;
 
     if (search) {
       result = await getSearch(id, type, language, search, config);
     } else {
       switch (id) {
         case "tmdb.trending":
-          result = await getTrending(...args, genre, config);
+          result = await getTrending(type, language, page, genre, config);
           break;
 
         case "tmdb.favorites":
-          result = await getFavorites(...args, genre, config);
+          result = await getFavorites(type, language, page, genre, config);
           break;
 
         case "tmdb.watchlist":
-          result = await getWatchList(...args, genre, config);
+          result = await getWatchList(type, language, page, genre, config);
           break;
 
         case "trakt.watchlist":
-          result = await getTraktWatchlist(...args, genre, config.traktAccessToken);
+          result = await getTraktWatchlist(type, language, page, genre, config.traktAccessToken);
           break;
 
         case "trakt.recommendations":
-          result = await getTraktRecommendations(...args, genre, config.traktAccessToken);
+          result = await getTraktRecommendations(type, language, page, genre, config.traktAccessToken);
           break;
 
         default:
           result = await getCatalog(type, language, page, id, genre, config);
-          break;
       }
     }
 
     return res.json({
-      metas: Array.isArray(result?.metas) ? result.metas : [],
+      metas: result?.metas || [],
     });
 
   } catch (e) {
@@ -148,7 +140,53 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   }
 });
 
-/* ---------------- META (FIXED - SAFE ID HANDLING) ---------------- */
+/* ---------------- 🔥 FIX: CATCH-ALL ROUTE (THIS FIXES DRAMA ISSUE) ---------------- */
+
+addon.get("/:catalogChoices?/catalog/:type/*", async (req, res) => {
+  try {
+    const { catalogChoices, type } = req.params;
+
+    let fullPath = req.params[0] || "";
+    let id = String(fullPath);
+
+    try {
+      id = decodeURIComponent(id);
+    } catch {}
+
+    id = id
+      .replace("/genre=", "")
+      .replace("genre=", "")
+      .replace(".json", "")
+      .trim();
+
+    const config = parseConfig(catalogChoices) || {};
+    const language = config.language || DEFAULT_LANGUAGE;
+
+    const { genre, skip, search } = req.query;
+    const page = skip ? Math.floor(skip / 20) + 1 : 1;
+
+    let result;
+
+    if (search) {
+      result = await getSearch(id, type, language, search, config);
+    } else {
+      result = await getCatalog(type, language, page, id, genre, config);
+    }
+
+    return res.json({
+      metas: result?.metas || [],
+    });
+
+  } catch (e) {
+    console.error("Catalog fallback error:", e);
+
+    return res.json({
+      metas: [],
+    });
+  }
+});
+
+/* ---------------- META ---------------- */
 
 addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
   try {
@@ -163,11 +201,10 @@ addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
 
     const tmdbId = rawId;
 
-    const safeKey = `${language}:${req.params.type}:${tmdbId}`;
+    const key = `${language}:${req.params.type}:${tmdbId}`;
 
-    const resp = await cacheWrapMeta(
-      safeKey,
-      () => getMeta(req.params.type, language, tmdbId, config)
+    const resp = await cacheWrapMeta(key, () =>
+      getMeta(req.params.type, language, tmdbId, config)
     );
 
     res.json(resp);
