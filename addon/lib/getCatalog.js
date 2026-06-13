@@ -15,14 +15,21 @@ function dedupe(arr) {
   });
 }
 
-/* 🔥 FIX: CLEAN UHF GENRE STRING PROPERLY */
+/* 🔥 FIX: DOUBLE SAFE DECODE */
 function cleanGenre(input) {
   if (!input) return null;
 
-  return decodeURIComponent(input)
-    .replace(/\.json$/, "")
-    .replace(/\+/g, " ")
-    .trim();
+  try {
+    return decodeURIComponent(decodeURIComponent(input))
+      .replace(/\.json$/, "")
+      .replace(/\+/g, " ")
+      .trim();
+  } catch {
+    return input
+      .replace(/\.json$/, "")
+      .replace(/\+/g, " ")
+      .trim();
+  }
 }
 
 function mapResults(results, genreList, type) {
@@ -36,20 +43,28 @@ function mapResults(results, genreList, type) {
     return {
       id: `tmdb:${el.id}`,
       name: type === "movie" ? el.title : el.name,
+
       genre: genres.length ? genres.slice(0, 3) : ["Uncategorized"],
+
       poster: el.poster_path
         ? `https://image.tmdb.org/t/p/w500${el.poster_path}`
         : "",
+
       background: el.backdrop_path
         ? `https://image.tmdb.org/t/p/original${el.backdrop_path}`
         : "",
+
       posterShape: "regular",
+
       imdbRating: el.vote_average ? el.vote_average.toFixed(1) : "N/A",
+
       year:
         type === "movie"
           ? el.release_date?.substring(0, 4) || ""
           : el.first_air_date?.substring(0, 4) || "",
+
       type,
+
       description: el.overview || "",
     };
   });
@@ -78,8 +93,11 @@ async function getCatalog(type, language, page, id, genre, config) {
     include_adult: false,
   };
 
-  /* ---------------- CLEAN GENRE ---------------- */
   const cleanGenreValue = cleanGenre(genre);
+
+  /* ---------------- DEBUG (IMPORTANT) ---------------- */
+  console.log("👉 RAW GENRE:", genre);
+  console.log("👉 CLEAN GENRE:", cleanGenreValue);
 
   /* ---------------- YEAR FILTER ---------------- */
   if (id === "tmdb.year" && cleanGenreValue) {
@@ -90,44 +108,31 @@ async function getCatalog(type, language, page, id, genre, config) {
     }
   }
 
-  /* ---------------- GENRE FILTER (FIXED SAFE MATCH) ---------------- */
+  /* ---------------- GENRE FILTER (FIXED SAFELY) ---------------- */
   if (id === "tmdb.top" && cleanGenreValue) {
     const g = genreList.find((x) => {
       if (!x?.name) return false;
-
-      return (
-        x.name.toLowerCase() === cleanGenreValue.toLowerCase() ||
-        x.name.toLowerCase().includes(cleanGenreValue.toLowerCase())
-      );
+      return x.name.toLowerCase() === cleanGenreValue.toLowerCase();
     });
 
     if (g?.id) {
+      console.log("👉 GENRE MATCHED:", g.name, g.id);
       params.with_genres = g.id;
     } else {
-      console.warn(
-        "⚠️ Genre NOT matched (no filter applied):",
-        cleanGenreValue
-      );
+      console.log("⚠️ GENRE NOT FOUND → NO FILTER APPLIED");
+      // 🔥 IMPORTANT FIX: do NOT break results
     }
   }
 
-  /* ---------------- FETCH (SAFE) ---------------- */
-
   async function fetchPage(p) {
-    let res;
-
     try {
-      res = await fetchFunction(p);
+      const res = await fetchFunction(p);
+      if (!res?.results || !Array.isArray(res.results)) return [];
+      return mapResults(res.results, genreList, type);
     } catch (e) {
       console.error("TMDB fetch failed:", e.message);
       return [];
     }
-
-    if (!res?.results || !Array.isArray(res.results)) {
-      return [];
-    }
-
-    return mapResults(res.results, genreList, type);
   }
 
   try {
@@ -140,10 +145,10 @@ async function getCatalog(type, language, page, id, genre, config) {
 
     let metas = dedupe([...page1, ...page2]);
 
-    /* ---------------- FALLBACK ---------------- */
+    /* ---------------- SAFE FALLBACK ---------------- */
 
     if (!metas.length) {
-      console.warn("⚠️ EMPTY METAS - fallback returned");
+      console.warn("⚠️ EMPTY RESULT SET");
 
       return {
         metas: [
@@ -154,7 +159,7 @@ async function getCatalog(type, language, page, id, genre, config) {
             genre: ["Uncategorized"],
             poster: "",
             background: "",
-            description: "TMDB returned no results for this filter.",
+            description: "No data returned from TMDB (check filters).",
           },
         ],
       };
