@@ -65,17 +65,22 @@ addon.get("/:catalogChoices?/manifest.json", async (req, res) => {
   }
 });
 
-/* ---------------- CATALOG (FIXED ROUTE) ---------------- */
+/* ---------------- CATALOG (FIXED - SAFE DROP-IN) ---------------- */
 
-addon.get("/:catalogChoices?/catalog/:type/:id(*)", async (req, res) => {
+addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   const { catalogChoices, type } = req.params;
 
   let id = String(req.params.id || "");
 
-  // FIX: decode + remove junk safely
-  id = decodeURIComponent(id);
-  id = id.split("/")[0];
-  id = id.replace(".json", "");
+  try {
+    id = decodeURIComponent(id);
+  } catch {}
+
+  id = id
+    .replace("/genre=", "")
+    .replace("genre=", "")
+    .replace(".json", "")
+    .trim();
 
   let config = {};
   try {
@@ -124,7 +129,7 @@ addon.get("/:catalogChoices?/catalog/:type/:id(*)", async (req, res) => {
     }
 
     return res.json({
-      metas: result?.metas || [],
+      metas: Array.isArray(result?.metas) ? result.metas : [],
     });
 
   } catch (e) {
@@ -143,17 +148,25 @@ addon.get("/:catalogChoices?/catalog/:type/:id(*)", async (req, res) => {
   }
 });
 
-/* ---------------- META ---------------- */
+/* ---------------- META (FIXED - SAFE ID HANDLING) ---------------- */
 
 addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
   try {
     const config = parseConfig(req.params.catalogChoices) || {};
     const language = config.language || DEFAULT_LANGUAGE;
 
-    let tmdbId = String(req.params.id).split(":")[1];
+    let rawId = String(req.params.id || "");
+
+    if (rawId.includes(":")) {
+      rawId = rawId.split(":")[1];
+    }
+
+    const tmdbId = rawId;
+
+    const safeKey = `${language}:${req.params.type}:${tmdbId}`;
 
     const resp = await cacheWrapMeta(
-      `${language}:${req.params.type}:${tmdbId}`,
+      safeKey,
       () => getMeta(req.params.type, language, tmdbId, config)
     );
 
@@ -172,9 +185,7 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
   let config = {};
   try {
     config = parseConfig(req.params.catalogChoices) || {};
-  } catch {
-    config = {};
-  }
+  } catch {}
 
   try {
     const title = req.query.title || "";
