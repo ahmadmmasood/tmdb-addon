@@ -1,7 +1,7 @@
 const express = require("express");
 const addon = express();
 
-/* ---------------- LOGGING (UHF DEBUG) ---------------- */
+/* ---------------- LOGGING ---------------- */
 
 addon.use((req, res, next) => {
   console.log("👉 HIT:", req.method, req.originalUrl);
@@ -65,16 +65,20 @@ addon.get("/:catalogChoices?/manifest.json", async (req, res) => {
   }
 });
 
-/* ---------------- CATALOG (🔥 FIXED ROUTE) ---------------- */
+/* ---------------- CATALOG (FIXED) ---------------- */
 
-addon.get("/:catalogChoices?/catalog/:type/:id(*)", async (req, res) => {
+addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   const { catalogChoices, type } = req.params;
 
-  let id = req.params.id;
+  // 🔥 FULL CLEAN FIX FOR UHF IDS
+  let id = String(req.params.id || "");
 
-  // cleanup UHF weird encoding
-  id = id.split("/genre=")[0];
-  id = id.replace(".json", "");
+  id = decodeURIComponent(id);
+
+  id = id
+    .replace(".json", "")
+    .replace("/genre=", "")
+    .replace("genre=", "");
 
   let config = {};
   try {
@@ -142,13 +146,17 @@ addon.get("/:catalogChoices?/catalog/:type/:id(*)", async (req, res) => {
   }
 });
 
-/* ---------------- META ---------------- */
+/* ---------------- META (FIX: FORCE STRING ID) ---------------- */
 
 addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
   try {
     const config = parseConfig(req.params.catalogChoices) || {};
     const language = config.language || DEFAULT_LANGUAGE;
-    const tmdbId = req.params.id.split(":")[1];
+
+    let tmdbId = req.params.id;
+
+    // 🔥 FIX: force string + remove tmdb:
+    tmdbId = String(tmdbId).split(":")[1];
 
     const resp = await cacheWrapMeta(
       `${language}:${req.params.type}:${tmdbId}`,
@@ -178,9 +186,7 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
     const title = req.query.title || "";
     const year = req.query.year || "";
 
-    if (!title) {
-      return res.json({ streams: [] });
-    }
+    if (!title) return res.json({ streams: [] });
 
     let stream = null;
 
@@ -190,9 +196,7 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
       stream = await findSeriesStream(title, config);
     }
 
-    if (!stream || !stream.url) {
-      return res.json({ streams: [] });
-    }
+    if (!stream?.url) return res.json({ streams: [] });
 
     return res.json({
       streams: [
@@ -208,7 +212,6 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
 
   } catch (e) {
     console.error("Stream error:", e);
-
     return res.json({ streams: [] });
   }
 });
