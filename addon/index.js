@@ -65,20 +65,17 @@ addon.get("/:catalogChoices?/manifest.json", async (req, res) => {
   }
 });
 
-/* ---------------- CATALOG (FIXED) ---------------- */
+/* ---------------- CATALOG (FIXED ROUTE) ---------------- */
 
-addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
+addon.get("/:catalogChoices?/catalog/:type/:id(*)", async (req, res) => {
   const { catalogChoices, type } = req.params;
 
-  // 🔥 FULL CLEAN FIX FOR UHF IDS
   let id = String(req.params.id || "");
 
+  // FIX: decode + remove junk safely
   id = decodeURIComponent(id);
-
-  id = id
-    .replace(".json", "")
-    .replace("/genre=", "")
-    .replace("genre=", "");
+  id = id.split("/")[0];
+  id = id.replace(".json", "");
 
   let config = {};
   try {
@@ -146,17 +143,14 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   }
 });
 
-/* ---------------- META (FIX: FORCE STRING ID) ---------------- */
+/* ---------------- META ---------------- */
 
 addon.get("/:catalogChoices?/meta/:type/:id.json", async (req, res) => {
   try {
     const config = parseConfig(req.params.catalogChoices) || {};
     const language = config.language || DEFAULT_LANGUAGE;
 
-    let tmdbId = req.params.id;
-
-    // 🔥 FIX: force string + remove tmdb:
-    tmdbId = String(tmdbId).split(":")[1];
+    let tmdbId = String(req.params.id).split(":")[1];
 
     const resp = await cacheWrapMeta(
       `${language}:${req.params.type}:${tmdbId}`,
