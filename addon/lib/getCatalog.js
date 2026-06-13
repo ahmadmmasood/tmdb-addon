@@ -63,48 +63,40 @@ function normalize(str) {
     .trim();
 }
 
-/* ---------------- CLEAN GENRE SYSTEM (IMPORTANT) ---------------- */
-/**
- * We STOP relying on full TMDB chaos.
- * We map everything into your SIMPLE UI categories.
- */
+/* ---------------- UNIFIED GENRE SYSTEM (FIX CORE ISSUE) ---------------- */
 
-const GENRE_ALIASES = {
+const GENRE_MAP = {
   "Action": ["Action", "Action & Adventure"],
   "Adventure": ["Adventure", "Action & Adventure"],
-  "Action & Adventure": ["Action & Adventure", "Action", "Adventure"],
-
+  "Animation": ["Animation"],
   "Comedy": ["Comedy"],
   "Crime": ["Crime"],
   "Drama": ["Drama"],
-  "Horror": ["Horror"],
   "Documentary": ["Documentary"],
-  "Sci-Fi & Fantasy": ["Science Fiction", "Sci-Fi & Fantasy", "Fantasy"],
-  "Thriller": ["Thriller"],
-  "Kids": ["Family", "Kids", "Children"],
+  "Family": ["Family", "Kids"],
+  "Fantasy": ["Fantasy", "Sci-Fi & Fantasy"],
+  "History": ["History"],
+  "Horror": ["Horror"],
+  "Music": ["Music"],
+  "Mystery": ["Mystery"],
   "Romance": ["Romance"],
+  "Science Fiction": ["Science Fiction", "Sci-Fi & Fantasy"],
+  "Thriller": ["Thriller"],
+  "War": ["War"],
+  "Western": ["Western"],
 };
 
-const MAIN_GENRES = new Set([
-  "Action",
-  "Adventure",
-  "Comedy",
-  "Crime",
-  "Drama",
-  "Horror",
-  "Documentary",
-  "Sci-Fi & Fantasy",
-  "Thriller",
-  "Kids",
-  "Romance",
-]);
+function unifyGenre(name) {
+  if (!name) return null;
 
-function cleanGenre(name) {
-  for (const key of Object.keys(GENRE_ALIASES)) {
-    if (GENRE_ALIASES[key].some((g) => normalize(g) === normalize(name))) {
+  const n = normalize(name);
+
+  for (const key of Object.keys(GENRE_MAP)) {
+    if (GENRE_MAP[key].some((g) => normalize(g) === n)) {
       return key;
     }
   }
+
   return null;
 }
 
@@ -116,9 +108,8 @@ function mapResults(results, genreList, type) {
       ? el.genre_ids
           .map((id) => genreList.find((g) => g.id === id)?.name)
           .filter(Boolean)
-          .map(cleanGenre)
+          .map(unifyGenre)
           .filter(Boolean)
-          .filter((g) => MAIN_GENRES.has(g))
       : [];
 
     return {
@@ -160,6 +151,7 @@ async function getCatalog(type, language, page, id, genre, config) {
       : tmdb.discoverTv.bind(tmdb);
 
   let genreList = [];
+
   try {
     genreList = await getGenreList(language, type, config);
   } catch (e) {
@@ -177,7 +169,7 @@ async function getCatalog(type, language, page, id, genre, config) {
     include_adult: false,
   };
 
-  /* ---------------- TRENDING (FIXED CLEANLY) ---------------- */
+  /* ---------------- TRENDING (UNCHANGED BUT SAFE) ---------------- */
 
   const isTrending =
     parsed.baseId?.includes("tmdb.trending") &&
@@ -206,16 +198,21 @@ async function getCatalog(type, language, page, id, genre, config) {
     }
   }
 
-  /* ---------------- GENRE FILTER ---------------- */
+  /* ---------------- GENRE FILTER (FIXED MATCHING) ---------------- */
 
   if (parsed.baseId?.includes("tmdb.top") && parsed.genre) {
-    const match = genreList.find((g) =>
-      cleanGenre(g?.name) === cleanGenre(parsed.genre)
-    );
+    const target = unifyGenre(parsed.genre);
+
+    const match = genreList.find((g) => {
+      const gName = unifyGenre(g?.name);
+      return gName && gName === target;
+    });
 
     if (match?.id) {
       params.with_genres = String(match.id);
-      console.log("👉 GENRE MATCHED:", match.name);
+      console.log("👉 GENRE MATCHED:", match.name, match.id);
+    } else {
+      console.log("⚠️ Genre not found → fallback unfiltered");
     }
   }
 
