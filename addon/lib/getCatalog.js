@@ -73,6 +73,12 @@ function normalize(str) {
     .trim();
 }
 
+/* ---------------- TRENDING FIX ---------------- */
+
+function isTrendingCategory(baseId, genre) {
+  return baseId?.includes("tmdb.trending") && (genre === "Day" || genre === "Week");
+}
+
 /* ---------------- MAP RESULTS ---------------- */
 
 function mapResults(results, genreList, type) {
@@ -86,7 +92,6 @@ function mapResults(results, genreList, type) {
     return {
       id: `tmdb:${el.id}`,
       name: type === "movie" ? el.title : el.name,
-
       genre: genres.length ? genres.slice(0, 3) : ["Uncategorized"],
 
       poster: el.poster_path
@@ -140,7 +145,45 @@ async function getCatalog(type, language, page, id, genre, config) {
   console.log("👉 BASE ID:", parsed.baseId);
   console.log("👉 EXTRACTED GENRE:", parsed.genre);
 
-  /* ---------------- GENRE FILTER (FIXED) ---------------- */
+  /* ---------------- TRENDING HANDLING (IMPORTANT FIX) ---------------- */
+
+  if (isTrendingCategory(parsed.baseId, parsed.genre)) {
+    console.log("👉 TRENDING MODE DETECTED:", parsed.genre);
+
+    const endpoint =
+      parsed.genre === "Day"
+        ? "day"
+        : "week";
+
+    // override fetch function for trending
+    const trending = tmdb.getTrending?.bind(tmdb);
+
+    if (trending) {
+      const fetchTrending = async (p) => {
+        try {
+          const res = await trending(endpoint, p.page || 1);
+          if (!res?.results) return [];
+          return mapResults(res.results, genreList, type);
+        } catch (e) {
+          console.error("Trending fetch failed:", e.message);
+          return [];
+        }
+      };
+
+      const startPage = Number(page) || 1;
+
+      const [a, b] = await Promise.all([
+        fetchTrending({ page: startPage }),
+        fetchTrending({ page: startPage + 1 }),
+      ]);
+
+      return {
+        metas: dedupe([...a, ...b]).slice(0, 20),
+      };
+    }
+  }
+
+  /* ---------------- GENRE FILTER ---------------- */
 
   if (parsed.baseId?.includes("tmdb.top") && parsed.genre) {
     const normalizedTarget = normalize(parsed.genre);
@@ -158,12 +201,12 @@ async function getCatalog(type, language, page, id, genre, config) {
     }
   }
 
-  /* ---------------- FETCH ---------------- */
+  /* ---------------- FETCH NORMAL DISCOVER ---------------- */
 
   async function fetchPage(p) {
     try {
       const res = await fetchFunction(p);
-      if (!res?.results || !Array.isArray(res.results)) return [];
+      if (!res?.results) return [];
       return mapResults(res.results, genreList, type);
     } catch (e) {
       console.error("TMDB fetch failed:", e.message);
