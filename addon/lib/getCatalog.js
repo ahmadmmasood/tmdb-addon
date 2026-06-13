@@ -15,46 +15,55 @@ function dedupe(arr) {
   });
 }
 
-/* 🔥 FIX: ALWAYS SAFE DECODE (handles %2520 etc) */
+/* ---------------- SAFE DECODE ---------------- */
+
 function safeDecode(str) {
   if (!str) return null;
 
   try {
     let out = str;
 
-    // decode multiple layers (important for %2520 cases)
     for (let i = 0; i < 3; i++) {
       out = decodeURIComponent(out);
     }
 
     return out
       .replace(/\.json$/, "")
-      .replace(/\+/g, " ")
       .trim();
   } catch {
-    return String(str)
-      .replace(/\.json$/, "")
-      .replace(/\+/g, " ")
-      .trim();
+    return String(str).replace(/\.json$/, "").trim();
   }
 }
 
-/* 🔥 FIX: EXTRACT CLEAN CATEGORY + GENRE */
+/* ---------------- FIXED PARSER (CRITICAL) ---------------- */
+
 function parseCatalogId(id) {
   if (!id) return { baseId: null, genre: null };
 
-  const clean = safeDecode(id);
+  let clean = safeDecode(id);
 
-  // split only last "/genre="
-  const parts = clean.split("/genre=");
+  // CASE 1: old format -> tmdb.top/genre=Comedy
+  if (clean.includes("/genre=")) {
+    const parts = clean.split("/genre=");
+    return {
+      baseId: parts[0],
+      genre: parts[1] || null,
+    };
+  }
 
-  if (parts.length === 1) {
-    return { baseId: parts[0], genre: null };
+  // CASE 2: new format -> tmdb.topComedy / tmdb.latestDrama
+  const match = clean.match(/^(tmdb\.(top|latest|trending))(.+)$/);
+
+  if (match) {
+    return {
+      baseId: match[1], // tmdb.top
+      genre: match[3] ? match[3].trim() : null,
+    };
   }
 
   return {
-    baseId: parts[0],
-    genre: parts[1],
+    baseId: clean,
+    genre: null,
   };
 }
 
@@ -120,25 +129,30 @@ async function getCatalog(type, language, page, id, genre, config) {
     include_adult: false,
   };
 
-  /* 🔥 PARSE ID (THIS IS THE CORE FIX) */
+  /* ---------------- PARSE ID ---------------- */
+
   const parsed = parseCatalogId(id);
 
   console.log("\n👉 RAW ID:", id);
   console.log("👉 BASE ID:", parsed.baseId);
   console.log("👉 EXTRACTED GENRE:", parsed.genre);
 
-  /* ---------------- APPLY GENRE FILTER ---------------- */
+  /* ---------------- APPLY GENRE FILTER SAFELY ---------------- */
 
-  if (parsed.baseId?.includes("tmdb.top") && parsed.genre) {
+  if (
+    parsed.baseId?.includes("tmdb.top") &&
+    parsed.genre
+  ) {
     const match = genreList.find(
-      (g) => g?.name?.toLowerCase() === parsed.genre.toLowerCase()
+      (g) =>
+        g?.name?.toLowerCase() === parsed.genre.toLowerCase()
     );
 
     if (match?.id) {
       console.log("👉 GENRE MATCHED:", match.name);
       params.with_genres = match.id;
     } else {
-      console.log("⚠️ NO GENRE MATCH → returning unfiltered results");
+      console.log("⚠️ Genre not found, returning unfiltered results");
     }
   }
 
@@ -147,7 +161,7 @@ async function getCatalog(type, language, page, id, genre, config) {
   async function fetchPage(p) {
     try {
       const res = await fetchFunction(p);
-      if (!res?.results) return [];
+      if (!res?.results || !Array.isArray(res.results)) return [];
       return mapResults(res.results, genreList, type);
     } catch (e) {
       console.error("TMDB fetch failed:", e.message);
@@ -156,19 +170,19 @@ async function getCatalog(type, language, page, id, genre, config) {
   }
 
   try {
-    const start = parseInt(page) || 1;
+    const startPage = parseInt(page) || 1;
 
     const [a, b] = await Promise.all([
-      fetchPage({ ...params, page: start }),
-      fetchPage({ ...params, page: start + 1 }),
+      fetchPage({ ...params, page: startPage }),
+      fetchPage({ ...params, page: startPage + 1 }),
     ]);
 
     let metas = dedupe([...a, ...b]);
 
-    /* ---------------- SAFE FALLBACK ---------------- */
+    /* ---------------- FALLBACK ---------------- */
 
     if (!metas.length) {
-      console.warn("⚠️ EMPTY RESULT - fallback triggered");
+      console.warn("⚠️ EMPTY RESULT SET");
 
       return {
         metas: [
@@ -179,8 +193,7 @@ async function getCatalog(type, language, page, id, genre, config) {
             genre: ["Uncategorized"],
             poster: "",
             background: "",
-            description:
-              "TMDB returned no results (try removing filters or check API).",
+            description: "TMDB returned no results.",
           },
         ],
       };
@@ -189,8 +202,8 @@ async function getCatalog(type, language, page, id, genre, config) {
     return {
       metas: metas.slice(0, 20),
     };
-  } catch (err) {
-    console.error("getCatalog fatal error:", err);
+  } catch (error) {
+    console.error("getCatalog error:", error);
 
     return {
       metas: [
@@ -201,7 +214,7 @@ async function getCatalog(type, language, page, id, genre, config) {
           genre: ["Uncategorized"],
           poster: "",
           background: "",
-          description: err.message,
+          description: error.message,
         },
       ],
     };
