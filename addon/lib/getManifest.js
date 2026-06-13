@@ -1,11 +1,11 @@
 require("dotenv").config();
+
 const { getGenreList } = require("./getGenreList");
 const packageJson = require("../../package.json");
-const CATALOG_TYPES = require("../static/catalog-types.json");
 
 const DEFAULT_LANGUAGE = "en-US";
 
-/* ---------------- FIXED LANGS (ONLY EN + ES) ---------------- */
+/* ---------------- FIXED LANGS ---------------- */
 function getLanguages() {
   return ["English", "Spanish"];
 }
@@ -38,19 +38,42 @@ function createCatalog(id, type, name, options = []) {
   };
 }
 
-/* ---------------- DEFAULT ---------------- */
+/* ---------------- CLEAN DEFAULT CATEGORIES ---------------- */
+
 function getDefaultCatalogs() {
   return [
     { id: "tmdb.top", type: "movie" },
     { id: "tmdb.top", type: "series" },
+
+    // KEEP trending BUT NO Day/Week exposed
     { id: "tmdb.trending", type: "movie" },
     { id: "tmdb.trending", type: "series" },
+
     { id: "tmdb.latest", type: "movie" },
     { id: "tmdb.latest", type: "series" },
   ];
 }
 
+/* ---------------- SAFE GENRE GROUPING ---------------- */
+
+function buildSafeGenres(genres) {
+  if (!Array.isArray(genres)) return [];
+
+  const list = genres.filter(Boolean);
+
+  const hasAction = list.includes("Action");
+  const hasAdventure = list.includes("Adventure");
+
+  return [
+    ...list,
+
+    // virtual combined category (UI ONLY)
+    ...(hasAction && hasAdventure ? ["Action & Adventure"] : []),
+  ];
+}
+
 /* ---------------- MANIFEST ---------------- */
+
 async function getManifest(config = {}) {
   const language = config.language || DEFAULT_LANGUAGE;
 
@@ -77,26 +100,50 @@ async function getManifest(config = {}) {
     const base =
       c.type === "movie" ? movieGenres : seriesGenres;
 
+    /* ---------------- YEAR ---------------- */
     if (c.id.includes("year")) {
       return createCatalog(c.id, c.type, "Year", years);
     }
 
+    /* ---------------- LANGUAGE ---------------- */
     if (c.id.includes("language")) {
       return createCatalog(c.id, c.type, "Language", getLanguages());
     }
 
+    /* ---------------- TRENDING (FIXED - NO DAY/WEEK UI) ---------------- */
     if (c.id.includes("trending")) {
-      return createCatalog(c.id, c.type, "Trending", [
-        "Day",
-        "Week",
-      ]);
+      return {
+        id: c.id,
+        type: c.type,
+        name: "Trending",
+        pageSize: 20,
+        extra: [
+          {
+            name: "range",
+            options: ["all"], // 🔥 NO Day / Week exposed anymore
+            isRequired: false,
+          },
+        ],
+      };
     }
 
+    /* ---------------- LATEST ---------------- */
     if (c.id.includes("latest")) {
-      return createCatalog(c.id, c.type, "Latest", base);
+      return createCatalog(
+        c.id,
+        c.type,
+        "Latest",
+        buildSafeGenres(base)
+      );
     }
 
-    return createCatalog(c.id, c.type, "Popular", base);
+    /* ---------------- TOP / POPULAR ---------------- */
+    return createCatalog(
+      c.id,
+      c.type,
+      "Popular",
+      buildSafeGenres(base)
+    );
   });
 
   return {
