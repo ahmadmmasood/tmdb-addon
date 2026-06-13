@@ -2,7 +2,6 @@ require("dotenv").config();
 
 const { getTmdbClient } = require("../utils/getTmdbClient");
 const { getGenreList } = require("./getGenreList");
-const CATALOG_TYPES = require("../static/catalog-types.json");
 
 /* ---------------- HELPERS ---------------- */
 
@@ -14,6 +13,16 @@ function dedupe(arr) {
     seen.add(x.id);
     return true;
   });
+}
+
+/* 🔥 FIX: CLEAN UHF GENRE STRING PROPERLY */
+function cleanGenre(input) {
+  if (!input) return null;
+
+  return decodeURIComponent(input)
+    .replace(/\.json$/, "")
+    .replace(/\+/g, " ")
+    .trim();
 }
 
 function mapResults(results, genreList, type) {
@@ -47,7 +56,7 @@ function mapResults(results, genreList, type) {
           ? el.release_date?.substring(0, 4) || ""
           : el.first_air_date?.substring(0, 4) || "",
 
-      type: type === "movie" ? "movie" : "series",
+      type,
 
       description: el.overview || "",
     };
@@ -72,30 +81,32 @@ async function getCatalog(type, language, page, id, genre, config) {
     console.error("Genre load failed:", e.message);
   }
 
-  /* ---------------- IMPORTANT FIX ----------------
-     DO NOT OVER-FILTER TMDB (this was causing EMPTY RESULTS)
-  ------------------------------------------------ */
   const params = {
     page,
     include_adult: false,
   };
 
+  /* 🔥 FIX: CLEAN GENRE FROM UHF */
+  const cleanGenreValue = cleanGenre(genre);
+
   /* ---------------- YEAR FILTER ---------------- */
-  if (id === "tmdb.year" && genre) {
+  if (id === "tmdb.year" && cleanGenreValue) {
     if (type === "movie") {
-      params.primary_release_year = genre;
+      params.primary_release_year = cleanGenreValue;
     } else {
-      params.first_air_date_year = genre;
+      params.first_air_date_year = cleanGenreValue;
     }
   }
 
   /* ---------------- GENRE FILTER ---------------- */
-  if (id === "tmdb.top" && genre) {
-    const g = genreList.find((x) => x.name === genre);
-    if (g) params.with_genres = g.id;
+  if (id === "tmdb.top" && cleanGenreValue) {
+    const g = genreList.find((x) => x.name === cleanGenreValue);
+    if (g) {
+      params.with_genres = g.id;
+    } else {
+      console.warn("⚠️ Genre not found:", cleanGenreValue);
+    }
   }
-
-  /* ---------------- FETCH ---------------- */
 
   async function fetchPage(p) {
     try {
@@ -118,9 +129,11 @@ async function getCatalog(type, language, page, id, genre, config) {
 
     let metas = dedupe([...page1, ...page2]);
 
-    /* ---------------- EMPTY SAFE STATE ---------------- */
+    /* ---------------- FINAL SAFETY ---------------- */
 
     if (!metas.length) {
+      console.warn("⚠️ EMPTY METAS - returning fallback");
+
       return {
         metas: [
           {
