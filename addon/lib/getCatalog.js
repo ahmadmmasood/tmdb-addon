@@ -15,49 +15,47 @@ function dedupe(arr) {
   });
 }
 
-/* ---------------- SAFE DECODE ---------------- */
-
-function safeDecode(input) {
-  if (!input) return "";
+/* 🔥 FIX: ALWAYS SAFE DECODE (handles %2520 etc) */
+function safeDecode(str) {
+  if (!str) return null;
 
   try {
-    return decodeURIComponent(decodeURIComponent(input));
-  } catch {
-    try {
-      return decodeURIComponent(input);
-    } catch {
-      return input;
+    let out = str;
+
+    // decode multiple layers (important for %2520 cases)
+    for (let i = 0; i < 3; i++) {
+      out = decodeURIComponent(out);
     }
+
+    return out
+      .replace(/\.json$/, "")
+      .replace(/\+/g, " ")
+      .trim();
+  } catch {
+    return String(str)
+      .replace(/\.json$/, "")
+      .replace(/\+/g, " ")
+      .trim();
   }
 }
 
-/* ---------------- GENRE EXTRACTION (ROBUST) ---------------- */
+/* 🔥 FIX: EXTRACT CLEAN CATEGORY + GENRE */
+function parseCatalogId(id) {
+  if (!id) return { baseId: null, genre: null };
 
-function extractGenre(id, genreParam) {
-  let genre = null;
-  let baseId = id;
+  const clean = safeDecode(id);
 
-  // Case 1: genre comes from URL param (?genre=)
-  if (genreParam) {
-    genre = safeDecode(genreParam);
-    return { baseId, genre };
+  // split only last "/genre="
+  const parts = clean.split("/genre=");
+
+  if (parts.length === 1) {
+    return { baseId: parts[0], genre: null };
   }
 
-  // Case 2: embedded in path
-  if (id.includes("genre=")) {
-    const parts = id.split("genre=");
-    baseId = parts[0].replace(/\/$/, "").trim();
-    genre = parts[1]?.replace(".json", "").trim();
-    genre = safeDecode(genre);
-  }
-
-  // Case 3: fallback (tmdb.topComedy style)
-  const fallback = id.match(/tmdb\.(top|latest)([A-Za-z0-9 &-]+)/i);
-  if (!genre && fallback) {
-    genre = fallback[2];
-  }
-
-  return { baseId, genre };
+  return {
+    baseId: parts[0],
+    genre: parts[1],
+  };
 }
 
 /* ---------------- MAP RESULTS ---------------- */
@@ -73,19 +71,26 @@ function mapResults(results, genreList, type) {
     return {
       id: `tmdb:${el.id}`,
       name: type === "movie" ? el.title : el.name,
+
       genre: genres.length ? genres.slice(0, 3) : ["Uncategorized"],
+
       poster: el.poster_path
         ? `https://image.tmdb.org/t/p/w500${el.poster_path}`
         : "",
+
       background: el.backdrop_path
         ? `https://image.tmdb.org/t/p/original${el.backdrop_path}`
         : "",
+
       posterShape: "regular",
+
       imdbRating: el.vote_average ? el.vote_average.toFixed(1) : "N/A",
+
       year:
         type === "movie"
           ? el.release_date?.substring(0, 4) || ""
           : el.first_air_date?.substring(0, 4) || "",
+
       type,
       description: el.overview || "",
     };
@@ -94,13 +99,13 @@ function mapResults(results, genreList, type) {
 
 /* ---------------- MAIN ---------------- */
 
-async function getCatalog(type, language, page, id, genreParam, config) {
-  const moviedb = getTmdbClient(config);
+async function getCatalog(type, language, page, id, genre, config) {
+  const tmdb = getTmdbClient(config);
 
   const fetchFunction =
     type === "movie"
-      ? moviedb.discoverMovie.bind(moviedb)
-      : moviedb.discoverTv.bind(moviedb);
+      ? tmdb.discoverMovie.bind(tmdb)
+      : tmdb.discoverTv.bind(tmdb);
 
   let genreList = [];
 
@@ -115,33 +120,34 @@ async function getCatalog(type, language, page, id, genreParam, config) {
     include_adult: false,
   };
 
-  /* ---------------- DEBUG ---------------- */
-
-  const { baseId, genre } = extractGenre(id, genreParam);
+  /* 🔥 PARSE ID (THIS IS THE CORE FIX) */
+  const parsed = parseCatalogId(id);
 
   console.log("\n👉 RAW ID:", id);
-  console.log("👉 BASE ID:", baseId);
-  console.log("👉 EXTRACTED GENRE:", genre);
+  console.log("👉 BASE ID:", parsed.baseId);
+  console.log("👉 EXTRACTED GENRE:", parsed.genre);
 
   /* ---------------- APPLY GENRE FILTER ---------------- */
 
-  if (genre && baseId.includes("tmdb.top")) {
-    const g = genreList.find(
-      (x) => x?.name?.toLowerCase() === genre.toLowerCase()
+  if (parsed.baseId?.includes("tmdb.top") && parsed.genre) {
+    const match = genreList.find(
+      (g) => g?.name?.toLowerCase() === parsed.genre.toLowerCase()
     );
 
-    if (g?.id) {
-      console.log("👉 GENRE MATCHED:", g.name);
-      params.with_genres = g.id;
+    if (match?.id) {
+      console.log("👉 GENRE MATCHED:", match.name);
+      params.with_genres = match.id;
     } else {
-      console.log("⚠️ GENRE NOT FOUND (no filter applied)");
+      console.log("⚠️ NO GENRE MATCH → returning unfiltered results");
     }
   }
+
+  /* ---------------- FETCH PAGE ---------------- */
 
   async function fetchPage(p) {
     try {
       const res = await fetchFunction(p);
-      if (!res?.results || !Array.isArray(res.results)) return [];
+      if (!res?.results) return [];
       return mapResults(res.results, genreList, type);
     } catch (e) {
       console.error("TMDB fetch failed:", e.message);
@@ -150,16 +156,20 @@ async function getCatalog(type, language, page, id, genreParam, config) {
   }
 
   try {
-    const startPage = parseInt(page) || 1;
+    const start = parseInt(page) || 1;
 
-    const [page1, page2] = await Promise.all([
-      fetchPage({ ...params, page: startPage }),
-      fetchPage({ ...params, page: startPage + 1 }),
+    const [a, b] = await Promise.all([
+      fetchPage({ ...params, page: start }),
+      fetchPage({ ...params, page: start + 1 }),
     ]);
 
-    let metas = dedupe([...page1, ...page2]);
+    let metas = dedupe([...a, ...b]);
+
+    /* ---------------- SAFE FALLBACK ---------------- */
 
     if (!metas.length) {
+      console.warn("⚠️ EMPTY RESULT - fallback triggered");
+
       return {
         metas: [
           {
@@ -169,15 +179,18 @@ async function getCatalog(type, language, page, id, genreParam, config) {
             genre: ["Uncategorized"],
             poster: "",
             background: "",
-            description: "No TMDB results returned.",
+            description:
+              "TMDB returned no results (try removing filters or check API).",
           },
         ],
       };
     }
 
-    return { metas: metas.slice(0, 20) };
-  } catch (error) {
-    console.error("getCatalog error:", error);
+    return {
+      metas: metas.slice(0, 20),
+    };
+  } catch (err) {
+    console.error("getCatalog fatal error:", err);
 
     return {
       metas: [
@@ -188,7 +201,7 @@ async function getCatalog(type, language, page, id, genreParam, config) {
           genre: ["Uncategorized"],
           poster: "",
           background: "",
-          description: error.message,
+          description: err.message,
         },
       ],
     };
