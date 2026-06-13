@@ -73,10 +73,34 @@ function normalize(str) {
     .trim();
 }
 
-/* ---------------- TRENDING FIX ---------------- */
+/* ---------------- MAIN GENRE ALLOWLIST (IMPORTANT) ---------------- */
 
-function isTrendingCategory(baseId, genre) {
-  return baseId?.includes("tmdb.trending") && (genre === "Day" || genre === "Week");
+const ALLOWED_GENRES = new Set([
+  "Action",
+  "Adventure",
+  "Animation",
+  "Comedy",
+  "Crime",
+  "Documentary",
+  "Drama",
+  "Family",
+  "Fantasy",
+  "History",
+  "Horror",
+  "Music",
+  "Mystery",
+  "Romance",
+  "Science Fiction",
+  "Sci-Fi & Fantasy",
+  "Thriller",
+  "War",
+  "Western",
+  "Kids",
+]);
+
+function isAllowedGenre(name) {
+  if (!name) return false;
+  return ALLOWED_GENRES.has(name);
 }
 
 /* ---------------- MAP RESULTS ---------------- */
@@ -87,11 +111,13 @@ function mapResults(results, genreList, type) {
       ? el.genre_ids
           .map((id) => genreList.find((g) => g.id === id)?.name)
           .filter(Boolean)
+          .filter(isAllowedGenre) // 🔥 IMPORTANT FILTER
       : [];
 
     return {
       id: `tmdb:${el.id}`,
       name: type === "movie" ? el.title : el.name,
+
       genre: genres.length ? genres.slice(0, 3) : ["Uncategorized"],
 
       poster: el.poster_path
@@ -145,17 +171,17 @@ async function getCatalog(type, language, page, id, genre, config) {
   console.log("👉 BASE ID:", parsed.baseId);
   console.log("👉 EXTRACTED GENRE:", parsed.genre);
 
-  /* ---------------- TRENDING HANDLING (IMPORTANT FIX) ---------------- */
+  /* ---------------- TRENDING FIX (CLEAN) ---------------- */
 
-  if (isTrendingCategory(parsed.baseId, parsed.genre)) {
-    console.log("👉 TRENDING MODE DETECTED:", parsed.genre);
+  const isTrending =
+    parsed.baseId?.includes("tmdb.trending") &&
+    (parsed.genre === "Day" || parsed.genre === "Week");
 
-    const endpoint =
-      parsed.genre === "Day"
-        ? "day"
-        : "week";
+  if (isTrending) {
+    console.log("👉 TRENDING MODE:", parsed.genre);
 
-    // override fetch function for trending
+    const endpoint = parsed.genre === "Day" ? "day" : "week";
+
     const trending = tmdb.getTrending?.bind(tmdb);
 
     if (trending) {
@@ -197,11 +223,11 @@ async function getCatalog(type, language, page, id, genre, config) {
       console.log("👉 GENRE MATCHED:", match.name, match.id);
       params.with_genres = String(match.id);
     } else {
-      console.log("⚠️ Genre not found → fallback to unfiltered");
+      console.log("⚠️ Genre not found → fallback unfiltered");
     }
   }
 
-  /* ---------------- FETCH NORMAL DISCOVER ---------------- */
+  /* ---------------- FETCH ---------------- */
 
   async function fetchPage(p) {
     try {
@@ -225,8 +251,6 @@ async function getCatalog(type, language, page, id, genre, config) {
     let metas = dedupe([...a, ...b]);
 
     if (!metas.length) {
-      console.warn("⚠️ EMPTY RESULT SET FOR:", parsed.genre);
-
       return {
         metas: [
           {
