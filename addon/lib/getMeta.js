@@ -3,11 +3,26 @@ const { getTmdbClient } = require("../utils/getTmdbClient");
 const { ramMetaCache } = require("./getCache");
 
 // --------------------
-// FIX: normalize ID
+// SAFE ID NORMALIZER (FIXES startsWith CRASH)
 // --------------------
 const normalizeId = (id) => {
-    if (!id) return id;
-    return id.startsWith("tmdb:") ? id.replace("tmdb:", "") : id;
+    if (id === null || id === undefined) return null;
+
+    // force string ALWAYS
+    id = String(id);
+
+    if (id.startsWith("tmdb:")) {
+        return id.replace("tmdb:", "");
+    }
+
+    return id;
+};
+
+// --------------------
+// SAFE NUMBER GUARD
+// --------------------
+const isValidId = (id) => {
+    return id !== null && id !== undefined && id !== "" && !isNaN(Number(id));
 };
 
 // --------------------
@@ -53,6 +68,12 @@ async function getMeta(type, language, tmdbId, config = {}) {
 
     console.log("NORMALIZED ID:", cleanId);
 
+    // 🔥 FIX: stop crashing early
+    if (!isValidId(cleanId)) {
+        console.error("INVALID TMDB ID:", cleanId);
+        return { meta: {} };
+    }
+
     const cacheKey = `meta-${type}-${language}-${cleanId}`;
 
     // ---- cache ----
@@ -79,7 +100,7 @@ async function getMeta(type, language, tmdbId, config = {}) {
     }
 
     // --------------------
-    // UHF SAFE META OBJECT
+    // SAFE META OBJECT (UHF FRIENDLY)
     // --------------------
     const meta = {
         id: `tmdb:${cleanId}`,
@@ -89,14 +110,13 @@ async function getMeta(type, language, tmdbId, config = {}) {
 
         poster: tmdbRes.poster_path
             ? `https://image.tmdb.org/t/p/w500${tmdbRes.poster_path}`
-            : null,
+            : "",
 
         background: tmdbRes.backdrop_path
             ? `https://image.tmdb.org/t/p/original${tmdbRes.backdrop_path}`
-            : null,
+            : "",
 
-        year:
-            (tmdbRes.release_date || tmdbRes.first_air_date || "").slice(0, 4),
+        year: (tmdbRes.release_date || tmdbRes.first_air_date || "").slice(0, 4),
 
         posterShape: "regular",
 
@@ -113,7 +133,7 @@ async function getMeta(type, language, tmdbId, config = {}) {
 
     console.log("META BUILT:", meta.name);
 
-    // ---- cache result ----
+    // ---- cache ----
     if (ramMetaCache) {
         await ramMetaCache.set(cacheKey, meta);
     }
