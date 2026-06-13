@@ -36,28 +36,20 @@ function mapResults(results, genreList, type) {
     return {
       id: `tmdb:${el.id}`,
       name: type === "movie" ? el.title : el.name,
-
       genre: genres.length ? genres.slice(0, 3) : ["Uncategorized"],
-
       poster: el.poster_path
         ? `https://image.tmdb.org/t/p/w500${el.poster_path}`
         : "",
-
       background: el.backdrop_path
         ? `https://image.tmdb.org/t/p/original${el.backdrop_path}`
         : "",
-
       posterShape: "regular",
-
       imdbRating: el.vote_average ? el.vote_average.toFixed(1) : "N/A",
-
       year:
         type === "movie"
           ? el.release_date?.substring(0, 4) || ""
           : el.first_air_date?.substring(0, 4) || "",
-
       type,
-
       description: el.overview || "",
     };
   });
@@ -86,7 +78,7 @@ async function getCatalog(type, language, page, id, genre, config) {
     include_adult: false,
   };
 
-  /* 🔥 FIX: CLEAN GENRE FROM UHF */
+  /* ---------------- CLEAN GENRE ---------------- */
   const cleanGenreValue = cleanGenre(genre);
 
   /* ---------------- YEAR FILTER ---------------- */
@@ -98,25 +90,44 @@ async function getCatalog(type, language, page, id, genre, config) {
     }
   }
 
-  /* ---------------- GENRE FILTER ---------------- */
+  /* ---------------- GENRE FILTER (FIXED SAFE MATCH) ---------------- */
   if (id === "tmdb.top" && cleanGenreValue) {
-    const g = genreList.find((x) => x.name === cleanGenreValue);
-    if (g) {
+    const g = genreList.find((x) => {
+      if (!x?.name) return false;
+
+      return (
+        x.name.toLowerCase() === cleanGenreValue.toLowerCase() ||
+        x.name.toLowerCase().includes(cleanGenreValue.toLowerCase())
+      );
+    });
+
+    if (g?.id) {
       params.with_genres = g.id;
     } else {
-      console.warn("⚠️ Genre not found:", cleanGenreValue);
+      console.warn(
+        "⚠️ Genre NOT matched (no filter applied):",
+        cleanGenreValue
+      );
     }
   }
 
+  /* ---------------- FETCH (SAFE) ---------------- */
+
   async function fetchPage(p) {
+    let res;
+
     try {
-      const res = await fetchFunction(p);
-      if (!res?.results) return [];
-      return mapResults(res.results, genreList, type);
+      res = await fetchFunction(p);
     } catch (e) {
-      console.error("fetchPage error:", e.message);
+      console.error("TMDB fetch failed:", e.message);
       return [];
     }
+
+    if (!res?.results || !Array.isArray(res.results)) {
+      return [];
+    }
+
+    return mapResults(res.results, genreList, type);
   }
 
   try {
@@ -129,10 +140,10 @@ async function getCatalog(type, language, page, id, genre, config) {
 
     let metas = dedupe([...page1, ...page2]);
 
-    /* ---------------- FINAL SAFETY ---------------- */
+    /* ---------------- FALLBACK ---------------- */
 
     if (!metas.length) {
-      console.warn("⚠️ EMPTY METAS - returning fallback");
+      console.warn("⚠️ EMPTY METAS - fallback returned");
 
       return {
         metas: [
