@@ -15,25 +15,21 @@ function dedupe(arr) {
   });
 }
 
-/* ---------------- CLEAN GENRE ---------------- */
+/* 🔥 FIX: EXTRACT GENRE FROM PATH (NOT QUERY) */
+function extractGenreFromId(id) {
+  if (!id) return { cleanId: id, genre: null };
 
-function cleanGenre(input) {
-  if (!input) return null;
+  const match = id.match(/genre=(.+)$/);
 
-  try {
-    return decodeURIComponent(decodeURIComponent(input))
-      .replace(/\.json$/, "")
-      .replace(/\+/g, " ")
-      .trim();
-  } catch {
-    return String(input)
-      .replace(/\.json$/, "")
-      .replace(/\+/g, " ")
-      .trim();
+  if (!match) {
+    return { cleanId: id, genre: null };
   }
-}
 
-/* ---------------- MAP RESULTS ---------------- */
+  return {
+    cleanId: id.split("/genre=")[0],
+    genre: decodeURIComponent(match[1].replace(".json", ""))
+  };
+}
 
 function mapResults(results, genreList, type) {
   return results.map((el) => {
@@ -96,48 +92,30 @@ async function getCatalog(type, language, page, id, genre, config) {
     include_adult: false,
   };
 
-  const cleanGenreValue = cleanGenre(genre);
+  /* 🔥 FIX: PARSE REAL GENRE FROM ID */
+  const parsed = extractGenreFromId(id);
 
-  /* ---------------- 🔥 DEBUG (IMPORTANT) ---------------- */
-
-  console.log("👉 getCatalog DEBUG");
-  console.log("   TYPE:", type);
-  console.log("   ID:", id);
-  console.log("   RAW GENRE:", genre);
-  console.log("   CLEAN GENRE:", cleanGenreValue);
-
-  /* ---------------- YEAR FILTER ---------------- */
-
-  if (id === "tmdb.year" && cleanGenreValue) {
-    if (type === "movie") {
-      params.primary_release_year = cleanGenreValue;
-    } else {
-      params.first_air_date_year = cleanGenreValue;
-    }
-  }
+  console.log("👉 RAW ID:", id);
+  console.log("👉 CLEAN ID:", parsed.cleanId);
+  console.log("👉 EXTRACTED GENRE:", parsed.genre);
 
   /* ---------------- GENRE FILTER ---------------- */
 
-  if (id === "tmdb.top" && cleanGenreValue && genreList.length) {
-    const g = genreList.find(
-      (x) =>
-        x?.name?.toLowerCase() === cleanGenreValue.toLowerCase()
+  if (parsed.genre && id.includes("tmdb.top")) {
+    const g = genreList.find((x) =>
+      x?.name?.toLowerCase() === parsed.genre.toLowerCase()
     );
 
     if (g?.id) {
-      console.log("👉 GENRE MATCHED:", g.name, g.id);
+      console.log("👉 GENRE MATCHED:", g.name);
       params.with_genres = g.id;
-    } else {
-      console.log("⚠️ GENRE NOT FOUND → returning ALL results");
     }
   }
-
-  /* ---------------- FETCH ---------------- */
 
   async function fetchPage(p) {
     try {
       const res = await fetchFunction(p);
-      if (!res?.results) return [];
+      if (!res?.results || !Array.isArray(res.results)) return [];
       return mapResults(res.results, genreList, type);
     } catch (e) {
       console.error("TMDB fetch failed:", e.message);
@@ -155,11 +133,7 @@ async function getCatalog(type, language, page, id, genre, config) {
 
     let metas = dedupe([...page1, ...page2]);
 
-    /* ---------------- FALLBACK ---------------- */
-
     if (!metas.length) {
-      console.warn("⚠️ EMPTY METAS for:", type, id);
-
       return {
         metas: [
           {
@@ -169,15 +143,13 @@ async function getCatalog(type, language, page, id, genre, config) {
             genre: ["Uncategorized"],
             poster: "",
             background: "",
-            description: "No results from TMDB.",
+            description: "No TMDB results returned.",
           },
         ],
       };
     }
 
-    return {
-      metas: metas.slice(0, 20),
-    };
+    return { metas: metas.slice(0, 20) };
   } catch (error) {
     console.error("getCatalog error:", error);
 
