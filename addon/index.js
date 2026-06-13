@@ -65,25 +65,16 @@ addon.get("/:catalogChoices?/manifest.json", async (req, res) => {
   }
 });
 
-/* ---------------- CATALOG (🔥 FIXED FOR UHF GENRE REQUESTS) ---------------- */
+/* ---------------- CATALOG ---------------- */
 
 addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   const { catalogChoices, type } = req.params;
 
-  // 🔥 CLEAN UHF DIRTY IDS
   let id = req.params.id;
 
-  if (id.includes("/genre=")) {
-    id = id.split("/genre=")[0];
-  }
-
-  if (id.includes("genre=")) {
-    id = id.split("genre=")[0];
-  }
-
-  if (id.endsWith(".json")) {
-    id = id.replace(".json", "");
-  }
+  if (id.includes("/genre=")) id = id.split("/genre=")[0];
+  if (id.includes("genre=")) id = id.split("genre=")[0];
+  if (id.endsWith(".json")) id = id.replace(".json", "");
 
   let config = {};
   try {
@@ -93,6 +84,7 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   }
 
   const language = config.language || DEFAULT_LANGUAGE;
+
   const { genre, skip, search } = req.query;
   const page = skip ? Math.floor(skip / 20) + 1 : 1;
 
@@ -131,9 +123,19 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
       }
     }
 
-    return res.json({
-      metas: result?.metas || [],
-    });
+    // ---------------- SAFE META NORMALIZATION FIX ----------------
+
+    let metas = [];
+
+    if (Array.isArray(result)) {
+      metas = result;
+    } else if (result?.metas) {
+      metas = result.metas;
+    } else {
+      metas = [];
+    }
+
+    return res.json({ metas });
 
   } catch (e) {
     console.error("Catalog error:", e);
@@ -187,9 +189,7 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
     const title = req.query.title || "";
     const year = req.query.year || "";
 
-    if (!title) {
-      return res.json({ streams: [] });
-    }
+    if (!title) return res.json({ streams: [] });
 
     let stream = null;
 
@@ -199,25 +199,20 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
       stream = await findSeriesStream(title, config);
     }
 
-    if (!stream || !stream.url) {
-      return res.json({ streams: [] });
-    }
+    if (!stream?.url) return res.json({ streams: [] });
 
     return res.json({
       streams: [
         {
           title: stream.title || "Xtream Stream",
           url: stream.url,
-          behaviorHints: {
-            bingeGroup: "default",
-          },
+          behaviorHints: { bingeGroup: "default" },
         },
       ],
     });
 
   } catch (e) {
     console.error("Stream error:", e);
-
     return res.json({ streams: [] });
   }
 });
