@@ -1,7 +1,7 @@
 const express = require("express");
 const addon = express();
 
-/* ---------------- LOGGING ---------------- */
+/* ---------------- LOGGING (UHF DEBUG) ---------------- */
 
 addon.use((req, res, next) => {
   console.log("👉 HIT:", req.method, req.originalUrl);
@@ -65,24 +65,16 @@ addon.get("/:catalogChoices?/manifest.json", async (req, res) => {
   }
 });
 
-/* ---------------- CATALOG ---------------- */
+/* ---------------- CATALOG (🔥 FIXED ROUTE) ---------------- */
 
-addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
+addon.get("/:catalogChoices?/catalog/:type/:id(*)", async (req, res) => {
   const { catalogChoices, type } = req.params;
 
   let id = req.params.id;
 
-  /* =========================================================
-     🔥 FIX: DOUBLE-ENCODING FROM UHF (%2520 ISSUE)
-  ========================================================= */
-  try {
-    id = decodeURIComponent(id);
-    id = decodeURIComponent(id); // handles %2520 → %20 → space
-  } catch (e) {}
-
-  if (id.includes("/genre=")) id = id.split("/genre=")[0];
-  if (id.includes("genre=")) id = id.split("genre=")[0];
-  if (id.endsWith(".json")) id = id.replace(".json", "");
+  // cleanup UHF weird encoding
+  id = id.split("/genre=")[0];
+  id = id.replace(".json", "");
 
   let config = {};
   try {
@@ -92,12 +84,11 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   }
 
   const language = config.language || DEFAULT_LANGUAGE;
-
   const { genre, skip, search } = req.query;
   const page = skip ? Math.floor(skip / 20) + 1 : 1;
 
   try {
-    let result;
+    let result = [];
 
     const args = [type, language, page];
 
@@ -127,20 +118,13 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
 
         default:
           result = await getCatalog(type, language, page, id, genre, config);
+          break;
       }
     }
 
-    /* ---------------- SAFE NORMALIZATION ---------------- */
-
-    let metas = [];
-
-    if (Array.isArray(result)) {
-      metas = result;
-    } else if (result?.metas) {
-      metas = result.metas;
-    }
-
-    return res.json({ metas });
+    return res.json({
+      metas: result?.metas || [],
+    });
 
   } catch (e) {
     console.error("Catalog error:", e);
@@ -186,13 +170,17 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
   let config = {};
   try {
     config = parseConfig(req.params.catalogChoices) || {};
-  } catch {}
+  } catch {
+    config = {};
+  }
 
   try {
     const title = req.query.title || "";
     const year = req.query.year || "";
 
-    if (!title) return res.json({ streams: [] });
+    if (!title) {
+      return res.json({ streams: [] });
+    }
 
     let stream = null;
 
@@ -202,7 +190,9 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
       stream = await findSeriesStream(title, config);
     }
 
-    if (!stream?.url) return res.json({ streams: [] });
+    if (!stream || !stream.url) {
+      return res.json({ streams: [] });
+    }
 
     return res.json({
       streams: [
@@ -218,6 +208,7 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
 
   } catch (e) {
     console.error("Stream error:", e);
+
     return res.json({ streams: [] });
   }
 });
