@@ -15,9 +15,11 @@ function dedupe(arr) {
   });
 }
 
-/* 🔥 SAFE DOUBLE DECODE */
+/* ---------------- SAFE DECODE ---------------- */
+
 function safeDecode(input) {
   if (!input) return "";
+
   try {
     return decodeURIComponent(decodeURIComponent(input));
   } catch {
@@ -29,21 +31,30 @@ function safeDecode(input) {
   }
 }
 
-/* 🔥 EXTRACT BASE + GENRE FROM WILDCARD PATH */
-function parseCatalogPath(fullPath = "") {
-  const decoded = safeDecode(fullPath);
+/* ---------------- GENRE EXTRACTION (ROBUST) ---------------- */
 
-  let baseId = decoded;
+function extractGenre(id, genreParam) {
   let genre = null;
+  let baseId = id;
 
-  if (decoded.includes("genre=")) {
-    const parts = decoded.split("genre=");
+  // Case 1: genre comes from URL param (?genre=)
+  if (genreParam) {
+    genre = safeDecode(genreParam);
+    return { baseId, genre };
+  }
+
+  // Case 2: embedded in path
+  if (id.includes("genre=")) {
+    const parts = id.split("genre=");
     baseId = parts[0].replace(/\/$/, "").trim();
-    genre = parts[1]
-      ?.replace(".json", "")
-      ?.trim();
-
+    genre = parts[1]?.replace(".json", "").trim();
     genre = safeDecode(genre);
+  }
+
+  // Case 3: fallback (tmdb.topComedy style)
+  const fallback = id.match(/tmdb\.(top|latest)([A-Za-z0-9 &-]+)/i);
+  if (!genre && fallback) {
+    genre = fallback[2];
   }
 
   return { baseId, genre };
@@ -83,7 +94,7 @@ function mapResults(results, genreList, type) {
 
 /* ---------------- MAIN ---------------- */
 
-async function getCatalog(type, language, page, id, genre, config) {
+async function getCatalog(type, language, page, id, genreParam, config) {
   const moviedb = getTmdbClient(config);
 
   const fetchFunction =
@@ -104,25 +115,26 @@ async function getCatalog(type, language, page, id, genre, config) {
     include_adult: false,
   };
 
-  /* ---------------- FIX PATH PARSING ---------------- */
+  /* ---------------- DEBUG ---------------- */
 
-  const { baseId, genre: extractedGenre } = parseCatalogPath(id);
+  const { baseId, genre } = extractGenre(id, genreParam);
 
-  console.log("👉 RAW ID:", id);
+  console.log("\n👉 RAW ID:", id);
   console.log("👉 BASE ID:", baseId);
-  console.log("👉 EXTRACTED GENRE:", extractedGenre);
+  console.log("👉 EXTRACTED GENRE:", genre);
 
-  /* ---------------- GENRE FILTER ---------------- */
+  /* ---------------- APPLY GENRE FILTER ---------------- */
 
-  if (extractedGenre && baseId.includes("tmdb.top")) {
+  if (genre && baseId.includes("tmdb.top")) {
     const g = genreList.find(
-      (x) =>
-        x?.name?.toLowerCase() === extractedGenre.toLowerCase()
+      (x) => x?.name?.toLowerCase() === genre.toLowerCase()
     );
 
     if (g?.id) {
       console.log("👉 GENRE MATCHED:", g.name);
       params.with_genres = g.id;
+    } else {
+      console.log("⚠️ GENRE NOT FOUND (no filter applied)");
     }
   }
 
@@ -157,7 +169,7 @@ async function getCatalog(type, language, page, id, genre, config) {
             genre: ["Uncategorized"],
             poster: "",
             background: "",
-            description: "TMDB returned no results.",
+            description: "No TMDB results returned.",
           },
         ],
       };
