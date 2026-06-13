@@ -38,17 +38,34 @@ async function xtreamRequest(config, action, extra = {}) {
   return res.data;
 }
 
-/* ---------------- STRONG NORMALIZER ---------------- */
+/* ---------------- NORMALIZE ---------------- */
 
 function normalize(str = "") {
   return str
     .toLowerCase()
-    .replace(/\[.*?\]|\(.*?\)/g, "") // remove brackets/years
-    .replace(/[^a-z0-9]/g, "") // remove everything else
+    .replace(/\[.*?\]|\(.*?\)/g, "")
+    .replace(/[^a-z0-9]/g, "")
     .trim();
 }
 
-/* ---------------- MOVIE STREAM FIX ---------------- */
+/* ---------------- SCORE MATCH (IMPORTANT FIX) ---------------- */
+
+function score(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 100;
+
+  const aWords = a.split("");
+  const bWords = b.split("");
+
+  let match = 0;
+  for (const ch of aWords) {
+    if (bWords.includes(ch)) match++;
+  }
+
+  return match;
+}
+
+/* ---------------- MOVIE STREAM ---------------- */
 
 async function findMovieStream(title, year, config) {
   const data = await xtreamRequest(config, "get_vod_streams");
@@ -57,18 +74,21 @@ async function findMovieStream(title, year, config) {
 
   const target = normalize(title);
 
-  // stronger match (fixes 90% of IPTV mismatches)
-  const match = data.find((item) => {
-    const name = normalize(item.name || "");
-    return (
-      name === target ||
-      name.includes(target) ||
-      target.includes(name)
-    );
-  });
+  let best = null;
+  let bestScore = 0;
 
-  if (!match) {
-    console.log("❌ No VOD match for:", title);
+  for (const item of data) {
+    const name = normalize(item.name || "");
+    const s = score(target, name);
+
+    if (s > bestScore) {
+      bestScore = s;
+      best = item;
+    }
+  }
+
+  if (!best || bestScore < 2) {
+    console.log("❌ No VOD match:", title);
     return null;
   }
 
@@ -76,20 +96,19 @@ async function findMovieStream(title, year, config) {
   const auth = getAuth(config);
 
   return {
-    url: `${base}/movie/${auth.username}/${auth.password}/${match.stream_id}.mp4`,
-    title: match.name,
+    url: `${base}/movie/${auth.username}/${auth.password}/${best.stream_id}.mp4`,
+    title: best.name,
   };
 }
 
-/* ---------------- SERIES STREAM FIX ---------------- */
+/* ---------------- SERIES STREAM ---------------- */
 
 async function findSeriesStream(title, config) {
   let data = await xtreamRequest(config, "get_series");
 
   if (!Array.isArray(data) || data.length === 0) {
-    console.log("⚠️ get_series empty, retrying fallback");
+    console.log("⚠️ get_series empty → fallback get_series_categories");
 
-    // fallback attempt (some servers behave differently)
     data = await xtreamRequest(config, "get_series_categories");
 
     if (!Array.isArray(data)) return null;
@@ -97,26 +116,30 @@ async function findSeriesStream(title, config) {
 
   const target = normalize(title);
 
-  const match = data.find((item) => {
-    const name = normalize(item.name || "");
-    return (
-      name === target ||
-      name.includes(target) ||
-      target.includes(name)
-    );
-  });
+  let best = null;
+  let bestScore = 0;
 
-  if (!match) {
-    console.log("❌ No SERIES match for:", title);
+  for (const item of data) {
+    const name = normalize(item.name || "");
+    const s = score(target, name);
+
+    if (s > bestScore) {
+      bestScore = s;
+      best = item;
+    }
+  }
+
+  if (!best || bestScore < 2) {
+    console.log("❌ No SERIES match:", title);
     return null;
   }
 
   const episodes = await xtreamRequest(config, "get_series_info", {
-    series_id: match.series_id,
+    series_id: best.series_id,
   });
 
   if (!episodes?.episodes) {
-    console.log("❌ No episodes found for series:", title);
+    console.log("❌ No episodes found:", title);
     return null;
   }
 
@@ -132,7 +155,7 @@ async function findSeriesStream(title, config) {
   }
 
   if (!firstEpisode) {
-    console.log("❌ No playable episode for:", title);
+    console.log("❌ No playable episode:", title);
     return null;
   }
 
@@ -141,7 +164,7 @@ async function findSeriesStream(title, config) {
 
   return {
     url: `${base}/series/${auth.username}/${auth.password}/${firstEpisode.id}.mp4`,
-    title: match.name,
+    title: best.name,
   };
 }
 
