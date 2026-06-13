@@ -1,7 +1,7 @@
 const express = require("express");
 const addon = express();
 
-/* ---------------- LOGGING (UHF DEBUG) ---------------- */
+/* ---------------- LOGGING ---------------- */
 
 addon.use((req, res, next) => {
   console.log("👉 HIT:", req.method, req.originalUrl);
@@ -72,6 +72,14 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
 
   let id = req.params.id;
 
+  /* =========================================================
+     🔥 FIX: DOUBLE-ENCODING FROM UHF (%2520 ISSUE)
+  ========================================================= */
+  try {
+    id = decodeURIComponent(id);
+    id = decodeURIComponent(id); // handles %2520 → %20 → space
+  } catch (e) {}
+
   if (id.includes("/genre=")) id = id.split("/genre=")[0];
   if (id.includes("genre=")) id = id.split("genre=")[0];
   if (id.endsWith(".json")) id = id.replace(".json", "");
@@ -89,7 +97,7 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   const page = skip ? Math.floor(skip / 20) + 1 : 1;
 
   try {
-    let result = [];
+    let result;
 
     const args = [type, language, page];
 
@@ -119,11 +127,10 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
 
         default:
           result = await getCatalog(type, language, page, id, genre, config);
-          break;
       }
     }
 
-    // ---------------- SAFE META NORMALIZATION FIX ----------------
+    /* ---------------- SAFE NORMALIZATION ---------------- */
 
     let metas = [];
 
@@ -131,8 +138,6 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
       metas = result;
     } else if (result?.metas) {
       metas = result.metas;
-    } else {
-      metas = [];
     }
 
     return res.json({ metas });
@@ -181,9 +186,7 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
   let config = {};
   try {
     config = parseConfig(req.params.catalogChoices) || {};
-  } catch {
-    config = {};
-  }
+  } catch {}
 
   try {
     const title = req.query.title || "";
@@ -206,7 +209,9 @@ addon.get("/:catalogChoices?/stream/:type/:id.json", async (req, res) => {
         {
           title: stream.title || "Xtream Stream",
           url: stream.url,
-          behaviorHints: { bingeGroup: "default" },
+          behaviorHints: {
+            bingeGroup: "default",
+          },
         },
       ],
     });
