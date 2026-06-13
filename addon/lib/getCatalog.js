@@ -15,31 +15,41 @@ function dedupe(arr) {
   });
 }
 
-/* 🔥 FIX: ROBUST GENRE + ID PARSING */
-function parseCatalogId(rawId) {
-  if (!rawId) return { baseId: null, genre: null };
-
-  let id = String(rawId);
-
+/* 🔥 SAFE DOUBLE DECODE */
+function safeDecode(input) {
+  if (!input) return "";
   try {
-    id = decodeURIComponent(id);
-  } catch {}
+    return decodeURIComponent(decodeURIComponent(input));
+  } catch {
+    try {
+      return decodeURIComponent(input);
+    } catch {
+      return input;
+    }
+  }
+}
 
-  id = id.replace(".json", "");
+/* 🔥 EXTRACT BASE + GENRE FROM WILDCARD PATH */
+function parseCatalogPath(fullPath = "") {
+  const decoded = safeDecode(fullPath);
 
+  let baseId = decoded;
   let genre = null;
 
-  const genreMatch = id.match(/genre=(.+)$/);
-  if (genreMatch) {
-    genre = genreMatch[1];
-    id = id.split("/genre=")[0];
+  if (decoded.includes("genre=")) {
+    const parts = decoded.split("genre=");
+    baseId = parts[0].replace(/\/$/, "").trim();
+    genre = parts[1]
+      ?.replace(".json", "")
+      ?.trim();
+
+    genre = safeDecode(genre);
   }
 
-  return {
-    baseId: id,
-    genre,
-  };
+  return { baseId, genre };
 }
+
+/* ---------------- MAP RESULTS ---------------- */
 
 function mapResults(results, genreList, type) {
   return results.map((el) => {
@@ -52,28 +62,20 @@ function mapResults(results, genreList, type) {
     return {
       id: `tmdb:${el.id}`,
       name: type === "movie" ? el.title : el.name,
-
       genre: genres.length ? genres.slice(0, 3) : ["Uncategorized"],
-
       poster: el.poster_path
         ? `https://image.tmdb.org/t/p/w500${el.poster_path}`
         : "",
-
       background: el.backdrop_path
         ? `https://image.tmdb.org/t/p/original${el.backdrop_path}`
         : "",
-
       posterShape: "regular",
-
       imdbRating: el.vote_average ? el.vote_average.toFixed(1) : "N/A",
-
       year:
         type === "movie"
           ? el.release_date?.substring(0, 4) || ""
           : el.first_air_date?.substring(0, 4) || "",
-
       type,
-
       description: el.overview || "",
     };
   });
@@ -102,25 +104,25 @@ async function getCatalog(type, language, page, id, genre, config) {
     include_adult: false,
   };
 
-  /* ---------------- DEBUG ---------------- */
-  const parsed = parseCatalogId(id);
+  /* ---------------- FIX PATH PARSING ---------------- */
+
+  const { baseId, genre: extractedGenre } = parseCatalogPath(id);
 
   console.log("👉 RAW ID:", id);
-  console.log("👉 BASE ID:", parsed.baseId);
-  console.log("👉 EXTRACTED GENRE:", parsed.genre);
+  console.log("👉 BASE ID:", baseId);
+  console.log("👉 EXTRACTED GENRE:", extractedGenre);
 
   /* ---------------- GENRE FILTER ---------------- */
 
-  if (parsed.genre && parsed.baseId?.includes("tmdb.top")) {
-    const g = genreList.find((x) =>
-      x?.name?.toLowerCase() === parsed.genre.toLowerCase()
+  if (extractedGenre && baseId.includes("tmdb.top")) {
+    const g = genreList.find(
+      (x) =>
+        x?.name?.toLowerCase() === extractedGenre.toLowerCase()
     );
 
     if (g?.id) {
       console.log("👉 GENRE MATCHED:", g.name);
       params.with_genres = g.id;
-    } else {
-      console.log("⚠️ GENRE NOT FOUND - skipping filter");
     }
   }
 
@@ -145,8 +147,6 @@ async function getCatalog(type, language, page, id, genre, config) {
 
     let metas = dedupe([...page1, ...page2]);
 
-    /* ---------------- SAFE FALLBACK ---------------- */
-
     if (!metas.length) {
       return {
         metas: [
@@ -157,15 +157,13 @@ async function getCatalog(type, language, page, id, genre, config) {
             genre: ["Uncategorized"],
             poster: "",
             background: "",
-            description: "No TMDB results returned.",
+            description: "TMDB returned no results.",
           },
         ],
       };
     }
 
-    return {
-      metas: metas.slice(0, 20),
-    };
+    return { metas: metas.slice(0, 20) };
   } catch (error) {
     console.error("getCatalog error:", error);
 
