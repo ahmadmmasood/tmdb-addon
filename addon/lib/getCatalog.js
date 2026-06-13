@@ -27,22 +27,19 @@ function safeDecode(str) {
       out = decodeURIComponent(out);
     }
 
-    return out
-      .replace(/\.json$/, "")
-      .trim();
+    return out.replace(/\.json$/, "").trim();
   } catch {
     return String(str).replace(/\.json$/, "").trim();
   }
 }
 
-/* ---------------- FIXED PARSER (CRITICAL) ---------------- */
+/* ---------------- PARSER ---------------- */
 
 function parseCatalogId(id) {
   if (!id) return { baseId: null, genre: null };
 
   let clean = safeDecode(id);
 
-  // CASE 1: old format -> tmdb.top/genre=Comedy
   if (clean.includes("/genre=")) {
     const parts = clean.split("/genre=");
     return {
@@ -51,12 +48,11 @@ function parseCatalogId(id) {
     };
   }
 
-  // CASE 2: new format -> tmdb.topComedy / tmdb.latestDrama
   const match = clean.match(/^(tmdb\.(top|latest|trending))(.+)$/);
 
   if (match) {
     return {
-      baseId: match[1], // tmdb.top
+      baseId: match[1],
       genre: match[3] ? match[3].trim() : null,
     };
   }
@@ -65,6 +61,16 @@ function parseCatalogId(id) {
     baseId: clean,
     genre: null,
   };
+}
+
+/* ---------------- NORMALIZE ---------------- */
+
+function normalize(str) {
+  return (str || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/&/g, "and")
+    .trim();
 }
 
 /* ---------------- MAP RESULTS ---------------- */
@@ -92,7 +98,6 @@ function mapResults(results, genreList, type) {
         : "",
 
       posterShape: "regular",
-
       imdbRating: el.vote_average ? el.vote_average.toFixed(1) : "N/A",
 
       year:
@@ -129,34 +134,31 @@ async function getCatalog(type, language, page, id, genre, config) {
     include_adult: false,
   };
 
-  /* ---------------- PARSE ID ---------------- */
-
   const parsed = parseCatalogId(id);
 
   console.log("\n👉 RAW ID:", id);
   console.log("👉 BASE ID:", parsed.baseId);
   console.log("👉 EXTRACTED GENRE:", parsed.genre);
 
-  /* ---------------- APPLY GENRE FILTER SAFELY ---------------- */
+  /* ---------------- GENRE FILTER (FIXED) ---------------- */
 
-  if (
-    parsed.baseId?.includes("tmdb.top") &&
-    parsed.genre
-  ) {
-    const match = genreList.find(
-      (g) =>
-        g?.name?.toLowerCase() === parsed.genre.toLowerCase()
-    );
+  if (parsed.baseId?.includes("tmdb.top") && parsed.genre) {
+    const normalizedTarget = normalize(parsed.genre);
+
+    const match = genreList.find((g) => {
+      if (!g?.name) return false;
+      return normalize(g.name) === normalizedTarget;
+    });
 
     if (match?.id) {
-      console.log("👉 GENRE MATCHED:", match.name);
-      params.with_genres = match.id;
+      console.log("👉 GENRE MATCHED:", match.name, match.id);
+      params.with_genres = String(match.id);
     } else {
-      console.log("⚠️ Genre not found, returning unfiltered results");
+      console.log("⚠️ Genre not found → fallback to unfiltered");
     }
   }
 
-  /* ---------------- FETCH PAGE ---------------- */
+  /* ---------------- FETCH ---------------- */
 
   async function fetchPage(p) {
     try {
@@ -170,7 +172,7 @@ async function getCatalog(type, language, page, id, genre, config) {
   }
 
   try {
-    const startPage = parseInt(page) || 1;
+    const startPage = Number(page) || 1;
 
     const [a, b] = await Promise.all([
       fetchPage({ ...params, page: startPage }),
@@ -179,16 +181,16 @@ async function getCatalog(type, language, page, id, genre, config) {
 
     let metas = dedupe([...a, ...b]);
 
-    /* ---------------- FALLBACK ---------------- */
-
     if (!metas.length) {
-      console.warn("⚠️ EMPTY RESULT SET");
+      console.warn("⚠️ EMPTY RESULT SET FOR:", parsed.genre);
 
       return {
         metas: [
           {
             id: "tmdb:no-content",
-            name: "No Results Found",
+            name: parsed.genre
+              ? `${parsed.genre} (No Results)`
+              : "No Results Found",
             type,
             genre: ["Uncategorized"],
             poster: "",
