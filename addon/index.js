@@ -65,7 +65,7 @@ addon.get("/:catalogChoices?/manifest.json", async (req, res) => {
   }
 });
 
-/* ---------------- CATALOG (PRIMARY ROUTE) ---------------- */
+/* ---------------- 🔥 FIXED CATALOG ROUTE ---------------- */
 
 addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   try {
@@ -86,8 +86,19 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
     const config = parseConfig(catalogChoices) || {};
     const language = config.language || DEFAULT_LANGUAGE;
 
-    const { genre, skip, search } = req.query;
+    /* 🔥 FIX: EXTRACT GENRE FROM PATH (IMPORTANT) */
+    let genre = null;
+
+    if (id.includes("genre=")) {
+      genre = id.split("genre=")[1];
+      id = id.split("genre=")[0];
+    }
+
+    const { skip, search } = req.query;
     const page = skip ? Math.floor(skip / 20) + 1 : 1;
+
+    console.log("👉 CLEAN ID:", id);
+    console.log("👉 EXTRACTED GENRE:", genre);
 
     let result;
 
@@ -140,7 +151,7 @@ addon.get("/:catalogChoices?/catalog/:type/:id", async (req, res) => {
   }
 });
 
-/* ---------------- 🔥 FIX: CATCH-ALL ROUTE (THIS FIXES DRAMA ISSUE) ---------------- */
+/* ---------------- FALLBACK CATALOG ROUTE ---------------- */
 
 addon.get("/:catalogChoices?/catalog/:type/*", async (req, res) => {
   try {
@@ -159,10 +170,17 @@ addon.get("/:catalogChoices?/catalog/:type/*", async (req, res) => {
       .replace(".json", "")
       .trim();
 
+    let genre = null;
+
+    if (id.includes("genre=")) {
+      genre = id.split("genre=")[1];
+      id = id.split("genre=")[0];
+    }
+
     const config = parseConfig(catalogChoices) || {};
     const language = config.language || DEFAULT_LANGUAGE;
 
-    const { genre, skip, search } = req.query;
+    const { skip, search } = req.query;
     const page = skip ? Math.floor(skip / 20) + 1 : 1;
 
     let result;
